@@ -16,10 +16,11 @@ local LURE_ITEM_BONUS = {
     [6533] = 100, [6532] = 75, [7307] = 75,
     [6811] = 50, [6530] = 50, [6529] = 25,
 }
-local frame, locationText, totalText, vendorTotalText, rateText, lureReminder
-local scrollChild, timerText, headings, headerLabels, sumRow, measureText
+local frame, locationText, totalText, rateText, lureReminder
+local scrollChild, timerText, headings, headerLabels, headerButtons, sumRow, measureText
 local rows, active, cast, bindingOwner = {}, false
 local tabs, activeTab, currentSession = {}, "session"
+local sortColumn, sortAscending = 2, false
 local channeling, lastLoot = false, 0
 local channelStoppedAt = 0
 local bagCounts, pendingFishLootUntil, catchSources = {}, 0, {}
@@ -167,10 +168,11 @@ local function Place()
     local zone = GetRealZoneText and GetRealZoneText() or "Unknown waters"
     local sub = GetMinimapZoneText and GetMinimapZoneText() or ""
     local key = tostring(map or zone) .. ":" .. sub
-    return key, sub ~= "" and sub ~= zone and (zone .. " - " .. sub) or zone
+    return key, sub ~= "" and sub ~= zone and (zone .. " - " .. sub) or zone,
+        zone, sub ~= "" and sub ~= zone and sub or nil
 end
 local function Water()
-    local key, name = Place()
+    local key, name, zone, subzone = Place()
     currentLocation = key
     local water = LH_FishingDB.waters[key]
     if not water then
@@ -178,6 +180,8 @@ local function Water()
         LH_FishingDB.waters[key] = water
     end
     water.name = name
+    water.zone = zone
+    water.subzone = subzone
     return water
 end
 local function Money(copper)
@@ -254,8 +258,17 @@ local function Refresh()
     end
     local chanceItems = visibleItems
     local chanceTotal = activeTab == "history" and historyTotal or 0
-    headerLabels[3]:SetText(activeTab == "session" and "Session %"
-        or activeTab == "history" and "Here %" or "Overall %")
+    local headerTitles = {"Item", "Qty", activeTab == "session" and "Session %"
+        or activeTab == "history" and "Here %" or "Overall %",
+        "AH Each", "AH Sum", "Common in Area"}
+    for column, label in ipairs(headerLabels) do
+        label:SetText(headerTitles[column])
+        local arrow = headerButtons[column].arrow
+        arrow:SetShown(sortColumn == column)
+        if sortColumn == column then
+            arrow:SetTexCoord(0, 0.5625, sortAscending and 1 or 0, sortAscending and 0 or 1)
+        end
+    end
     local entries = {}
     for id, count in pairs(visibleItems) do
         if count > 0 then
@@ -263,18 +276,74 @@ local function Refresh()
             if activeTab ~= "history" then chanceTotal = chanceTotal + count end
         end
     end
-    table.sort(entries, function(a, b) return a.count == b.count and a.id < b.id or a.count > b.count end)
-    local auctionTotal, vendorTotal, auctionUnitTotal, vendorUnitTotal = 0, 0, 0, 0
-    local auctionKnown, vendorKnown, quantityTotal = false, false, 0
-    local widths = {190, 30, 70, 62, 62, 78, 78}
+    local areaCounts, commonAreas = {}, {}
+    for _, recordedWater in pairs(LH_FishingDB.waters) do
+        local zone, subzone = recordedWater.zone, recordedWater.subzone
+        if type(recordedWater.name) == "string" then
+            local nameZone, nameSubzone = recordedWater.name:match("^(.-) %- (.+)$")
+            zone = zone or nameZone or recordedWater.name
+            if nameZone == zone then subzone = subzone or nameSubzone end
+        end
+        local area = type(zone) == "string" and zone ~= "" and
+            (type(subzone) == "string" and subzone ~= "" and (zone .. " (" .. subzone .. ")") or zone)
+        if area and type(recordedWater.items) == "table" then
+            for id, count in pairs(recordedWater.items) do
+                if type(count) == "number" and count > 0 then
+                    local counts = areaCounts[id]
+                    if not counts then counts = {}; areaCounts[id] = counts end
+                    counts[area] = (counts[area] or 0) + count
+                end
+            end
+        end
+    end
+    for id, counts in pairs(areaCounts) do
+        local bestArea, bestCount
+        for area, count in pairs(counts) do
+            if not bestCount or count > bestCount or (count == bestCount and area < bestArea) then
+                bestArea, bestCount = area, count
+            end
+        end
+        commonAreas[id] = bestArea
+    end
+    local itemInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
+    for _, entry in ipairs(entries) do
+        local name, icon
+        if itemInfo then
+            local ok, itemName, _, _, _, _, _, _, _, _, itemIcon = pcall(itemInfo, entry.id)
+            if ok then name, icon = itemName, itemIcon end
+        end
+        if type(name) ~= "string" or (issecretvalue and issecretvalue(name)) then name = nil end
+        if issecretvalue and issecretvalue(icon) then icon = nil end
+        entry.name = name or ("Item %d"):format(entry.id)
+        entry.icon = icon
+        entry.auctionPrice = Price(entry.id)
+        entry.area = commonAreas[entry.id]
+    end
+    local function SortValue(entry)
+        if sortColumn == 1 then return entry.name:lower() end
+        if sortColumn == 2 or sortColumn == 3 then return entry.count end
+        if sortColumn == 4 then return entry.auctionPrice end
+        if sortColumn == 5 then return entry.auctionPrice and entry.auctionPrice * entry.count end
+        return entry.area and entry.area:lower()
+    end
+    table.sort(entries, function(a, b)
+        local first, second = SortValue(a), SortValue(b)
+        if first == second then return a.id < b.id end
+        if first == nil then return false end
+        if second == nil then return true end
+        return sortAscending and first < second or first > second
+    end)
+    local auctionTotal, auctionUnitTotal = 0, 0
+    local auctionKnown, quantityTotal = false, 0
+    local widths = {190, 30, 70, 62, 62, 130}
     for column, label in ipairs(headerLabels) do
-        widths[column] = math.max(widths[column], MeasuredWidth(label:GetText()))
+        widths[column] = math.max(widths[column], MeasuredWidth(label:GetText()) + (sortColumn == column and 18 or 0))
     end
     for index, entry in ipairs(entries) do
         local row = rows[index]
         if not row then
             row = CreateFrame("Frame", nil, scrollChild)
-            row:SetSize(600, 21)
+            row:SetSize(610, 21)
             row:SetPoint("TOPLEFT", 0, -(index - 1) * 21)
             row.icon = row:CreateTexture(nil, "ARTWORK")
             row.icon:SetSize(17, 17)
@@ -294,27 +363,18 @@ local function Refresh()
                 if GameTooltip and GameTooltip:IsOwned(self) then GameTooltip:Hide() end
             end)
             row.cells = {}
-            for column = 1, 7 do row.cells[column] = Text(row, 11, "LEFT", 0, 0, 10) end
+            for column = 1, 6 do row.cells[column] = Text(row, 11, "LEFT", 0, 0, 10) end
             rows[index] = row
         end
-        local name, icon, sellPrice
-        local itemInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
-        if itemInfo then
-            local ok, itemName, _, _, _, _, _, _, _, _, itemIcon, itemPrice = pcall(itemInfo, entry.id)
-            if ok then name, icon, sellPrice = itemName, itemIcon, itemPrice end
-        end
-        if type(name) ~= "string" or (issecretvalue and issecretvalue(name)) then name = nil end
-        if issecretvalue and issecretvalue(icon) then icon = nil end
-        if issecretvalue and issecretvalue(sellPrice) then sellPrice = nil end
         row.itemID = entry.id
-        row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+        row.icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
         local localCount = chanceItems[entry.id] or 0
-        local auctionPrice = Price(entry.id)
+        local auctionPrice = entry.auctionPrice
         local values = {
-            name or ("Item %d"):format(entry.id), tostring(entry.count),
+            entry.name, tostring(entry.count),
             chanceTotal > 0 and string.format("%.1f%%", 100 * localCount / chanceTotal) or "-",
             Money(auctionPrice), Money(auctionPrice and auctionPrice * entry.count),
-            Money(sellPrice), Money(type(sellPrice) == "number" and sellPrice * entry.count or nil),
+            entry.area or "-",
         }
         for column, value in ipairs(values) do
             row.cells[column]:SetText(value)
@@ -330,28 +390,21 @@ local function Refresh()
             auctionUnitTotal = auctionUnitTotal + auctionPrice
             auctionKnown = true
         end
-        if type(sellPrice) == "number" then
-            vendorTotal = vendorTotal + sellPrice * entry.count
-            vendorUnitTotal = vendorUnitTotal + sellPrice
-            vendorKnown = true
-        end
         row:Show()
     end
     for i = #entries + 1, #rows do rows[i]:Hide() end
     local sumValues = {
         "Total", tostring(quantityTotal), "",
-        Money(auctionKnown and auctionUnitTotal or nil), Money(auctionKnown and auctionTotal or nil),
-        Money(vendorKnown and vendorUnitTotal or nil), Money(vendorKnown and vendorTotal or nil),
+        Money(auctionKnown and auctionUnitTotal or nil), Money(auctionKnown and auctionTotal or nil), "",
     }
     for column, value in ipairs(sumValues) do
         sumRow.cells[column]:SetText(value)
         if column > 1 then widths[column] = math.max(widths[column], MeasuredWidth(value)) end
     end
     local offsets = {21}
-    for column = 2, 7 do offsets[column] = offsets[column - 1] + widths[column - 1] + 6 end
-    local tableWidth = offsets[7] + widths[7] + 4
+    for column = 2, 6 do offsets[column] = offsets[column - 1] + widths[column - 1] + 6 end
+    local tableWidth = offsets[6] + widths[6] + 4
     totalText:SetText("AH total (priced): " .. Money(auctionKnown and auctionTotal or nil))
-    vendorTotalText:SetText("Vendor total: " .. Money(vendorKnown and vendorTotal or nil))
     local duration
     if activeTab == "session" then
         duration = currentSession and currentSession.firstCastAt
@@ -363,11 +416,11 @@ local function Refresh()
     end
     rateText:SetText("Estimated AH per hour: " .. Money(auctionKnown and duration >= 60 and auctionTotal * 3600 / duration or nil))
     local footerWidths = {
-        MeasuredWidth(totalText:GetText()), MeasuredWidth(vendorTotalText:GetText()), MeasuredWidth(rateText:GetText()),
+        MeasuredWidth(totalText:GetText()), MeasuredWidth(rateText:GetText()),
     }
     local reminderWidth = showReminder and MeasuredWidth(lureReminder:GetText()) or 0
-    local frameWidth = math.max(690, tableWidth + 42,
-        footerWidths[1] + footerWidths[2] + footerWidths[3] + 48 + (showReminder and reminderWidth + 12 or 0))
+    local frameWidth = math.max(650, tableWidth + 42,
+        footerWidths[1] + footerWidths[2] + 36 + (showReminder and reminderWidth + 12 or 0))
     if not Combat() then
         frame:SetWidth(frameWidth)
         frame:SetHeight(117 + (#entries + 1) * 21 + 35)
@@ -376,7 +429,13 @@ local function Refresh()
     headings:SetWidth(tableWidth)
     scrollChild:SetWidth(tableWidth)
     locationText:SetWidth(frame:GetWidth() - 24)
-    for column, label in ipairs(headerLabels) do SetCell(label, headings, offsets[column], widths[column]) end
+    for column, label in ipairs(headerLabels) do
+        SetCell(label, headings, offsets[column], widths[column])
+        SetCell(headerButtons[column], headings, offsets[column], widths[column])
+        local arrow = headerButtons[column].arrow
+        arrow:ClearAllPoints()
+        arrow:SetPoint("LEFT", label, "LEFT", label:GetStringWidth() + 4, 0)
+    end
     for _, row in ipairs(rows) do
         row:SetWidth(tableWidth)
         for column, cell in ipairs(row.cells) do SetCell(cell, row, offsets[column], widths[column]) end
@@ -386,7 +445,7 @@ local function Refresh()
     sumRow:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -#entries * 21)
     for column, cell in ipairs(sumRow.cells) do SetCell(cell, sumRow, offsets[column], widths[column]) end
     scrollChild:SetHeight((#entries + 1) * 21)
-    local footers = {totalText, vendorTotalText, rateText}
+    local footers = {totalText, rateText}
     local x = 12
     for index, footer in ipairs(footers) do
         footer:ClearAllPoints()
@@ -400,6 +459,7 @@ end
 local function SelectTab(key)
     if activeTab == key then return end
     activeTab = key
+    sortColumn, sortAscending = 2, false
     Refresh()
 end
 
@@ -456,6 +516,7 @@ local function StartSession()
     LH_FishingDB.sessions[#LH_FishingDB.sessions + 1] = session
     currentSession = session
     activeTab = "session"
+    sortColumn, sortAscending = 2, false
 end
 local function UpdateActive()
     local wanted = PoleEquipped()
@@ -498,7 +559,7 @@ local function CreateUI()
     cast:SetAttribute("type", "macro")
     cast:SetAttribute("macrotext", "/cast " .. FishingName())
     frame = CreateFrame("Frame", "LH_FishingFrame", UIParent, "BackdropTemplate")
-    frame:SetSize(690, 173)
+    frame:SetSize(650, 173)
     frame:SetFrameStrata("MEDIUM")
     frame:SetMovable(true)
     frame:SetClampedToScreen(true)
@@ -541,27 +602,45 @@ local function CreateUI()
         tabs[key] = tab
     end
     headings = CreateFrame("Frame", nil, frame)
-    headings:SetSize(648, 16)
+    headings:SetSize(610, 16)
     headings:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -97)
-    headerLabels = {}
+    headerLabels, headerButtons = {}, {}
     for _, column in ipairs({
         {"Item", 21, 190}, {"Qty", 217, 30}, {"Here", 253, 40},
         {"AH Each", 299, 62}, {"AH Sum", 367, 62},
-        {"Vendor Each", 435, 78}, {"Vendor Sum", 519, 78},
+        {"Common in Area", 435, 130},
     }) do
         local label = Text(headings, 10, "LEFT", column[2], 0, column[3])
         label:SetWordWrap(false)
         label:SetText(column[1])
         headerLabels[#headerLabels + 1] = label
+        local button = CreateFrame("Button", nil, headings)
+        button:SetSize(column[3], 16)
+        button:SetPoint("LEFT", headings, "LEFT", column[2], 0)
+        button.arrow = button:CreateTexture(nil, "OVERLAY")
+        button.arrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
+        button.arrow:SetSize(12, 12)
+        button.arrow:SetVertexColor(1, 0.82, 0.38, 1)
+        button.arrow:Hide()
+        local sortIndex = #headerLabels
+        button:SetScript("OnClick", function()
+            if sortColumn == sortIndex then
+                sortAscending = not sortAscending
+            else
+                sortColumn, sortAscending = sortIndex, true
+            end
+            Refresh()
+        end)
+        headerButtons[sortIndex] = button
     end
     scrollChild = CreateFrame("Frame", nil, frame)
     scrollChild:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -117)
-    scrollChild:SetWidth(648)
+    scrollChild:SetWidth(610)
     scrollChild:SetHeight(21)
     sumRow = CreateFrame("Frame", nil, scrollChild)
-    sumRow:SetSize(648, 21)
+    sumRow:SetSize(610, 21)
     sumRow.cells = {}
-    for column = 1, 7 do
+    for column = 1, 6 do
         local cell = Text(sumRow, 11, "LEFT", 0, 0, 10)
         cell:SetTextColor(1, 0.75, 0.15, 1)
         sumRow.cells[column] = cell
@@ -572,8 +651,7 @@ local function CreateUI()
     separator:SetPoint("TOPRIGHT", sumRow, "TOPRIGHT", 0, 0)
     separator:SetHeight(1)
     totalText = Text(frame, 11, "BOTTOMLEFT", 12, 12, 200)
-    vendorTotalText = Text(frame, 11, "BOTTOMLEFT", 220, 12, 160)
-    rateText = Text(frame, 11, "BOTTOMLEFT", 392, 12, 250)
+    rateText = Text(frame, 11, "BOTTOMLEFT", 220, 12, 250)
     lureReminder = Text(frame, 11, "BOTTOMRIGHT", -12, 12, 200)
     lureReminder:SetJustifyH("RIGHT")
     lureReminder:SetTextColor(1, 0.75, 0.15, 1)

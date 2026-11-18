@@ -12,7 +12,9 @@
   <li>Starts a new session when you equip a fishing pole. The large gold timer starts with that session's first cast and stops when you unequip the pole.</li>
   <li>Shows <strong>Session</strong> catches, <strong>History here</strong> from earlier sessions in the current area, and <strong>History overall</strong> across all recorded areas.</li>
   <li>Shows item counts and catch percentages for the selected tab. The current session's percentages use only that session's catches.</li>
-  <li>Shows Auctionator auction prices when available, vendor sell prices, column totals and estimated auction value per hour. Missing auction prices appear as a dash.</li>
+  <li>Shows each item's most common fishing area across the saved history in all three tabs, including its subzone when available.</li>
+  <li>Rows start sorted by quantity, highest first. Click a column heading to sort its rows; click it again to reverse the order. Switching tabs restores the default sort.</li>
+  <li>Shows Auctionator auction prices for each item and their totals in all three tabs, plus estimated auction value per hour. Missing auction prices appear as a dash.</li>
 </ul>
 
 <h2 style="color: #c78be6;">Fishing and lures</h2>
@@ -52,6 +54,7 @@
 <p><strong>Post-release updates</strong></p>
 
 <ul>
+  <li>Show AH prices without vendor columns, add the most common fishing area with subzone, and sort any column by clicking its heading.</li>
   <li>Show the active lure's fishing bonus and remaining time, and show the missing-lure reminder only when no lure is attached.</li>
   <li>Track catches from fishing loot messages, loot slots and bag changes without counting the same catch twice.</li>
   <li>Keep catch rows visible when the client's legacy item-info API is unavailable.</li>
