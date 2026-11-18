@@ -17,7 +17,7 @@
 
 <h2 style="color: #c78be6;">Fishing and lures</h2>
 
-<p>Open <strong>Options &rarr; AddOns &rarr; LH Tweaks &rarr; LH Fishing</strong>. <strong>Apply best lure automatically</strong> is on by default. If your pole has no lure and you have a usable one in your bags, the first Space press applies the strongest available lure; press Space again to cast. The window shows the active lure and its remaining time in light blue. If there is no active lure and none in your bags, a gold reminder appears. Turn the option off to cast without automatic lure application.</p>
+<p>Open <strong>Options &rarr; AddOns &rarr; LH Tweaks &rarr; LH Fishing</strong>. <strong>Apply best lure automatically</strong> is on by default. If your pole has no lure and you have a usable one in your bags, the first Space press applies the strongest available lure; press Space again to cast. The window shows the active lure's fishing bonus in light blue, plus its name when known and its remaining time when available. If there is no active lure and none in your bags, a gold reminder appears. Turn the option off to cast without automatic lure application.</p>
 
 <p>While your line is out, Space interacts with your bobber when it is the game's interaction target. If the game reports that no fish are hooked, the next Space press is ready to cast again. WoW requires a new key press for a new cast after that message.</p>
 

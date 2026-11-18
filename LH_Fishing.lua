@@ -11,9 +11,10 @@ local LURE_NAMES = {
     [7307] = "Flesh Eating Worm", [6811] = "Aquadynamic Fish Lens",
     [6530] = "Nightcrawlers", [6529] = "Shiny Bauble",
 }
-local LURE_ENCHANTS = {
-    [263] = "Shiny Bauble", [264] = "Fishing lure (+50)",
-    [265] = "Fishing lure (+75)", [266] = "Aquadynamic Fish Attractor",
+local LURE_ENCHANT_BONUS = {[263] = 25, [264] = 50, [265] = 75, [266] = 100}
+local LURE_ITEM_BONUS = {
+    [6533] = 100, [6532] = 75, [7307] = 75,
+    [6811] = 50, [6530] = 50, [6529] = 25,
 }
 local frame, locationText, totalText, vendorTotalText, rateText, lureReminder
 local scrollChild, timerText, headings, headerLabels, sumRow, measureText
@@ -130,10 +131,19 @@ local function UpdateLureStatus()
             pendingLureID = nil
         end
         local name = knownLureID and LURE_NAMES[knownLureID]
-            or LURE_ENCHANTS[enchantID] or "Fishing lure"
-        local seconds = math.max(0, math.ceil((milliseconds or 0) / 1000))
-        key = "active:" .. name
-        message = string.format("%s  %d:%02d remaining", name, math.floor(seconds / 60), seconds % 60)
+            or (enchantID == 263 and "Shiny Bauble")
+            or (enchantID == 266 and "Aquadynamic Fish Attractor")
+            or "Fishing lure"
+        local bonus = LURE_ENCHANT_BONUS[enchantID] or LURE_ITEM_BONUS[knownLureID]
+        local description = bonus and string.format("%s (+%d Fishing)", name, bonus) or name
+        key = "active:" .. description
+        if type(milliseconds) == "number" and milliseconds > 0 then
+            local seconds = math.ceil(milliseconds / 1000)
+            message = string.format("%s  %d:%02d remaining", description,
+                math.floor(seconds / 60), seconds % 60)
+        else
+            message = description
+        end
         lureReminder:SetTextColor(0.55, 0.82, 1, 1)
     elseif LH_FishingDB.autoLure and not LureInBags() then
         knownLureID, knownEnchantID = nil, nil
