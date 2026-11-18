@@ -16,9 +16,10 @@ local LURE_ITEM_BONUS = {
     [6533] = 100, [6532] = 75, [7307] = 75,
     [6811] = 50, [6530] = 50, [6529] = 25,
 }
-local frame, locationText, totalText, rateText, lureReminder
+local frame, titleText, locationText, totalText, rateText, lureReminder, modeButton
 local scrollChild, timerText, headings, headerLabels, headerButtons, sumRow, measureText
 local rows, active, cast, bindingOwner = {}, false
+local catchFlashUntil = {}
 local tabs, activeTab, currentSession = {}, "session"
 local sortColumn, sortAscending = 2, false
 local channeling, lastLoot = false, 0
@@ -156,6 +157,10 @@ local function UpdateLureStatus()
         lureReminder:SetTextColor(1, 0.75, 0.15, 1)
     else
         knownLureID, knownEnchantID = nil, nil
+        if LH_FishingDB.compact then
+            key, message = "inactive", "No lure active."
+            lureReminder:SetTextColor(0.7, 0.7, 0.7, 1)
+        end
     end
     lureReminder:SetShown(message ~= nil)
     if message then lureReminder:SetText(message) end
@@ -217,10 +222,35 @@ local function MeasuredWidth(value)
     measureText:SetText(value)
     return math.ceil(measureText:GetStringWidth() or 0) + 4
 end
+local function UpdateCatchFlashes()
+    local now = GetTime()
+    for id, expires in pairs(catchFlashUntil) do
+        if now >= expires then catchFlashUntil[id] = nil end
+    end
+    for _, row in ipairs(rows) do
+        local expires = activeTab ~= "history" and row:IsShown() and catchFlashUntil[row.itemID]
+        if expires then
+            local seconds = 1 - (expires - now)
+            local pulse = math.sin(seconds * math.pi)
+            row.qtyFlash:SetColorTexture(1, 0.65, 0.1, 0.55 * pulse)
+            row.qtyFlash:Show()
+            row.cells[2]:SetTextColor(1, 1, 1 - 0.55 * pulse, 1)
+        else
+            row.qtyFlash:Hide()
+            row.cells[2]:SetTextColor(1, 1, 1, 1)
+        end
+    end
+end
 local function Refresh()
     if not frame then return end
     local water = Water()
     timerText:SetText(SessionTime())
+    if LH_FishingDB.compact then
+        local compactWidth = math.max(230, MeasuredWidth(lureReminder:GetText()) + 24)
+        if not Combat() then frame:SetSize(compactWidth, 72) end
+        lureReminder:SetWidth(frame:GetWidth() - 24)
+        return
+    end
     local showReminder = lureReminder:IsShown()
     local key = currentLocation
     local historyItems, historyTotal, historySeconds = {}, water.total or 0, 0
@@ -348,6 +378,9 @@ local function Refresh()
             row.icon = row:CreateTexture(nil, "ARTWORK")
             row.icon:SetSize(17, 17)
             row.icon:SetPoint("LEFT", 0, 0)
+            row.qtyFlash = row:CreateTexture(nil, "BACKGROUND")
+            row.qtyFlash:SetSize(30, 19)
+            row.qtyFlash:Hide()
             row:EnableMouse(true)
             row:SetScript("OnEnter", function(self)
                 if not self.itemID or not GameTooltip then return end
@@ -439,6 +472,7 @@ local function Refresh()
     for _, row in ipairs(rows) do
         row:SetWidth(tableWidth)
         for column, cell in ipairs(row.cells) do SetCell(cell, row, offsets[column], widths[column]) end
+        SetCell(row.qtyFlash, row, offsets[2], widths[2])
     end
     sumRow:SetWidth(tableWidth)
     sumRow:ClearAllPoints()
@@ -454,6 +488,51 @@ local function Refresh()
         footer:SetJustifyH("LEFT")
         x = x + footerWidths[index] + 12
     end
+    UpdateCatchFlashes()
+end
+
+local function SetCompactMode(compact)
+    local left, top = frame:GetLeft(), frame:GetTop()
+    if left and top then
+        local scale = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        left, top = left * scale, top * scale
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+        LH_FishingDB.position = {anchor = "TOPLEFT", x = left, y = top}
+    end
+    LH_FishingDB.compact = compact == true
+    local standard = not LH_FishingDB.compact
+    titleText:SetShown(standard)
+    locationText:SetShown(standard)
+    headings:SetShown(standard)
+    scrollChild:SetShown(standard)
+    totalText:SetShown(standard)
+    rateText:SetShown(standard)
+    for _, tab in pairs(tabs) do tab:SetShown(standard) end
+    timerText:ClearAllPoints()
+    if standard then
+        timerText:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -48, -11)
+        timerText:SetWidth(200)
+        timerText:SetJustifyH("RIGHT")
+    else
+        timerText:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -11)
+        timerText:SetWidth(175)
+        timerText:SetJustifyH("LEFT")
+    end
+    lureReminder:ClearAllPoints()
+    if standard then
+        lureReminder:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 12)
+        lureReminder:SetJustifyH("RIGHT")
+    else
+        lureReminder:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -48)
+        lureReminder:SetJustifyH("LEFT")
+    end
+    modeButton.arrow:SetTexture(standard and "Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Up"
+        or "Interface\\Buttons\\UI-SpellbookIcon-NextPage-Up")
+    if active then
+        UpdateLureStatus()
+        Refresh()
+    end
 end
 
 local function SelectTab(key)
@@ -467,16 +546,20 @@ local function RestorePosition()
     frame:ClearAllPoints()
     local p = LH_FishingDB.position
     if type(p) == "table" and type(p.x) == "number" and type(p.y) == "number" then
-        frame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", p.x, p.y)
+        if p.anchor == "TOPLEFT" then
+            frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", p.x, p.y)
+        else
+            frame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", p.x, p.y)
+        end
     else
         frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     end
 end
 local function SavePosition()
-    local x, y = frame:GetCenter()
+    local x, y = frame:GetLeft(), frame:GetTop()
     if not x then return end
     local scale = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
-    LH_FishingDB.position = {x = x * scale, y = y * scale}
+    LH_FishingDB.position = {anchor = "TOPLEFT", x = x * scale, y = y * scale}
     RestorePosition()
 end
 local function BobberReady()
@@ -515,6 +598,7 @@ local function StartSession()
     local session = {startedAt = time(), items = {}, places = {}, casts = 0, seconds = 0}
     LH_FishingDB.sessions[#LH_FishingDB.sessions + 1] = session
     currentSession = session
+    catchFlashUntil = {}
     activeTab = "session"
     sortColumn, sortAscending = 2, false
 end
@@ -538,7 +622,10 @@ local function UpdateActive()
     if frame then frame:SetShown(active) end
     if not active then channeling, retryCast = false, false end
     ApplyBinding()
-    if active then Refresh() end
+    if active then
+        UpdateLureStatus()
+        Refresh()
+    end
 end
 local function CreateUI()
     LH_FishingDB = type(LH_FishingDB) == "table" and LH_FishingDB or {}
@@ -547,7 +634,8 @@ local function CreateUI()
     LH_FishingDB.sessions = type(LH_FishingDB.sessions) == "table" and LH_FishingDB.sessions or {}
     LH_FishingDB.locked = LH_FishingDB.locked == true
     LH_FishingDB.autoLure = LH_FishingDB.autoLure ~= false
-    LH_LayoutProfiles:Register(ADDON, LH_FishingDB, LH_FishingDB, {"position", "locked", "autoLure"})
+    LH_FishingDB.compact = LH_FishingDB.compact == true
+    LH_LayoutProfiles:Register(ADDON, LH_FishingDB, LH_FishingDB, {"position", "locked", "autoLure", "compact"})
     bindingOwner = CreateFrame("Frame")
     cast = CreateFrame("Button", "LH_FishingCastButton", UIParent, "SecureActionButtonTemplate")
     cast:SetSize(1, 1)
@@ -571,16 +659,31 @@ local function CreateUI()
     frame:SetBackdropBorderColor(0.65, 0.59, 0.45, 1)
     frame:SetScript("OnDragStart", function(self) if not LH_FishingDB.locked then self:StartMoving() end end)
     frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing(); SavePosition() end)
-    local title = Text(frame, 14, "TOPLEFT", 12, -12, 220)
-    title:SetText("LH Fishing")
-    title:SetTextColor(1, 0.75, 0.15, 1)
+    titleText = Text(frame, 14, "TOPLEFT", 12, -12, 220)
+    titleText:SetText("LH Fishing")
+    titleText:SetTextColor(1, 0.75, 0.15, 1)
     timerText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     timerText:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 28, "OUTLINE")
-    timerText:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -14, -9)
+    timerText:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -48, -11)
     timerText:SetWidth(200)
     timerText:SetJustifyH("RIGHT")
     timerText:SetTextColor(1, 0.75, 0.15, 1)
     timerText:SetText("00:00:00")
+    modeButton = CreateFrame("Button", nil, frame, "BackdropTemplate")
+    modeButton:SetSize(27, 25)
+    modeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -12, -12)
+    modeButton:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 8, insets = {left = 2, right = 2, top = 2, bottom = 2}})
+    modeButton:SetBackdropColor(0.16, 0.12, 0.07, 0.9)
+    modeButton:SetBackdropBorderColor(0.65, 0.59, 0.45, 1)
+    local highlight = modeButton:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetPoint("TOPLEFT", 3, -3)
+    highlight:SetPoint("BOTTOMRIGHT", -3, 3)
+    highlight:SetColorTexture(0.8, 0.65, 0.3, 0.2)
+    modeButton.arrow = modeButton:CreateTexture(nil, "ARTWORK")
+    modeButton.arrow:SetSize(17, 17)
+    modeButton.arrow:SetPoint("CENTER")
+    modeButton:SetScript("OnClick", function() SetCompactMode(not LH_FishingDB.compact) end)
     locationText = Text(frame, 11, "TOPLEFT", 12, -40, 666)
     measureText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     measureText:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 11)
@@ -659,10 +762,15 @@ local function CreateUI()
     lureReminder:Hide()
     RestorePosition()
     frame:Hide()
+    SetCompactMode(LH_FishingDB.compact)
     UpdateActive()
 end
 
 function Fishing:IsLocked() return LH_FishingDB and LH_FishingDB.locked end
+function Fishing:SetCompactMode(value)
+    if not frame then return end
+    SetCompactMode(value)
+end
 function Fishing:SetLocked(value)
     if not LH_FishingDB then return end
     LH_FishingDB.locked = value == true
@@ -690,6 +798,7 @@ function Fishing:ResetHistory()
     LH_FishingDB.sessions = {}
     LH_FishingDB.fishingSeconds = nil
     currentSession = nil
+    catchFlashUntil = {}
     lastLoot = 0
     bagCounts = CountBags()
     pendingFishLootUntil, catchSources = 0, {}
@@ -710,6 +819,7 @@ end
 
 local function RecordCatch(id, count)
     if not active or not id or count <= 0 then return end
+    catchFlashUntil[id] = GetTime() + 1
     local water = Water()
     water.last = time()
     LH_FishingDB.items[id] = (LH_FishingDB.items[id] or 0) + count
@@ -884,5 +994,6 @@ events:SetScript("OnUpdate", function(_, dt)
             refreshElapsed = 0
             Refresh()
         end
+        if next(catchFlashUntil) then UpdateCatchFlashes() end
     end
 end)

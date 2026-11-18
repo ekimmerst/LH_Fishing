@@ -39,6 +39,7 @@ local function Build(category, layout)
         if selected == category then
             Addon:SetLocked(false)
             Addon:SetAutoLureEnabled(true)
+            Addon:SetCompactMode(false)
             Addon:ResetPosition()
         end
     end, Addon)

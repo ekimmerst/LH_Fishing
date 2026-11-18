@@ -9,6 +9,7 @@
 <ul>
   <li>Press <strong>Space</strong> to cast and to interact with your bobber. Press Space again within two seconds of casting to reposition the bobber. <strong>Shift+Space</strong> jumps while the pole is equipped.</li>
   <li>Automatically loots fishing catches and lists every item caught. Hover over a row for the normal item tooltip.</li>
+  <li>Flashes the updated quantity and its background once over one second when you catch an item.</li>
   <li>Starts a new session when you equip a fishing pole. The large gold timer starts with that session's first cast and stops when you unequip the pole.</li>
   <li>Shows <strong>Session</strong> catches, <strong>History here</strong> from earlier sessions in the current area, and <strong>History overall</strong> across all recorded areas.</li>
   <li>Shows item counts and catch percentages for the selected tab. The current session's percentages use only that session's catches.</li>
@@ -27,11 +28,13 @@
 
 <p>Drag the unlocked window to move it; <strong>Lock fishing window</strong> prevents dragging. <strong>Reset position</strong> returns it to the screen center. The current area and its last fishing time appear below the title. A session ends when you unequip the pole; equipping it again starts an empty new session. Earlier catches remain under <strong>History here</strong> and <strong>History overall</strong>. Fishing history, session records and settings are saved per character.</p>
 
+<p>Click the left arrow beside the timer to switch to Compact Mode. It keeps the timer and lure status visible while the window shrinks from its right edge; the upper-left corner stays fixed. Click the right arrow to restore the full window. The mode is saved per character.</p>
+
 <p><strong>Reset history</strong> in the LH Fishing settings asks for confirmation before deleting this character's saved catches, sessions and area history. It keeps the window position and fishing settings.</p>
 
 <h2 style="color: #c78be6;">Settings profiles</h2>
 
-<p>Use <strong>Use settings from</strong> to copy another character's window position, lock state and automatic lure setting. Configure that character and log out before choosing it as a source. LH Tweaks can apply its source character to all LH companion addons. Catch and session history remain separate for each character.</p>
+<p>Use <strong>Use settings from</strong> to copy another character's window position, lock state, display mode and automatic lure setting. Configure that character and log out before choosing it as a source. LH Tweaks can apply its source character to all LH companion addons. Catch and session history remain separate for each character.</p>
 
 <h2 style="color: #73c9c4;">More LH addons</h2>
 
@@ -54,6 +57,8 @@
 <p><strong>Post-release updates</strong></p>
 
 <ul>
+  <li>Flash the caught item's quantity and its background once for one second.</li>
+  <li>Add a compact view with the session timer, lure status and a button to restore the full window.</li>
   <li>Show AH prices without vendor columns, add the most common fishing area with subzone, and sort any column by clicking its heading.</li>
   <li>Show the active lure's fishing bonus and remaining time, and show the missing-lure reminder only when no lure is attached.</li>
   <li>Track catches from fishing loot messages, loot slots and bag changes without counting the same catch twice.</li>
