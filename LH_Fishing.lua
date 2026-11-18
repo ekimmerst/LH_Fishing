@@ -297,14 +297,19 @@ local function Refresh()
             for column = 1, 7 do row.cells[column] = Text(row, 11, "LEFT", 0, 0, 10) end
             rows[index] = row
         end
-        local name, _, _, _, _, _, _, _, _, icon, sellPrice = GetItemInfo(entry.id)
+        local name, icon, sellPrice
+        local itemInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
+        if itemInfo then
+            local ok, itemName, _, _, _, _, _, _, _, _, itemIcon, itemPrice = pcall(itemInfo, entry.id)
+            if ok then name, icon, sellPrice = itemName, itemIcon, itemPrice end
+        end
+        if type(name) ~= "string" or (issecretvalue and issecretvalue(name)) then name = nil end
+        if issecretvalue and issecretvalue(icon) then icon = nil end
+        if issecretvalue and issecretvalue(sellPrice) then sellPrice = nil end
         row.itemID = entry.id
         row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
         local localCount = chanceItems[entry.id] or 0
         local auctionPrice = Price(entry.id)
-        if type(sellPrice) ~= "number" and C_Item and C_Item.GetItemInfo then
-            sellPrice = select(11, C_Item.GetItemInfo(entry.id))
-        end
         local values = {
             name or ("Item %d"):format(entry.id), tostring(entry.count),
             chanceTotal > 0 and string.format("%.1f%%", 100 * localCount / chanceTotal) or "-",
