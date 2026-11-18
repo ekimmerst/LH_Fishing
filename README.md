@@ -17,13 +17,13 @@
 
 <h2 style="color: #c78be6;">Fishing and lures</h2>
 
-<p>Open <strong>Options &rarr; AddOns &rarr; LH Tweaks &rarr; LH Fishing</strong>. <strong>Apply best lure automatically</strong> is on by default. If your pole has no lure and you have a usable one in your bags, the first Space press applies the strongest available lure; press Space again to cast. The window shows the active lure's fishing bonus in light blue, plus its name when known and its remaining time when available. If there is no active lure and none in your bags, a gold reminder appears. Turn the option off to cast without automatic lure application.</p>
+<p>Open <strong>Options &rarr; AddOns &rarr; LH Tweaks &rarr; LH Fishing</strong>. <strong>Apply best lure automatically</strong> is on by default. If your pole has no lure and you have a usable one in your bags, the first Space press applies the strongest available lure; press Space again to cast. The window shows the active lure's fishing bonus in light blue, plus its name when known and its remaining time when available. With automatic lure application enabled, a gold reminder appears only when no lure is attached and none is in your bags. Turn the option off to cast without automatic lure application.</p>
 
 <p>While your line is out, Space interacts with your bobber when it is the game's interaction target. If the game reports that no fish are hooked, the next Space press is ready to cast again. WoW requires a new key press for a new cast after that message.</p>
 
 <h2 style="color: #c78be6;">Window and history</h2>
 
-<p>Drag the unlocked window to move it; <strong>Lock fishing window</strong> prevents dragging. <strong>Reset position</strong> returns it to the screen center. The current area and its last fishing time appear below the title. A session ends when you unequip the pole. Fishing history, session records and settings are saved per character.</p>
+<p>Drag the unlocked window to move it; <strong>Lock fishing window</strong> prevents dragging. <strong>Reset position</strong> returns it to the screen center. The current area and its last fishing time appear below the title. A session ends when you unequip the pole; equipping it again starts an empty new session. Earlier catches remain under <strong>History here</strong> and <strong>History overall</strong>. Fishing history, session records and settings are saved per character.</p>
 
 <p><strong>Reset history</strong> in the LH Fishing settings asks for confirmation before deleting this character's saved catches, sessions and area history. It keeps the window position and fishing settings.</p>
 
@@ -48,6 +48,14 @@
 <p><strong>LH Tweaks is required.</strong> Install the LH Fishing folder beside LH Tweaks in <code>Interface/AddOns</code> and restart the game. Auctionator is optional for auction prices. If you also use Mastercraft's Angler helper, turn that helper off so both addons do not control Space at the same time. Please report problems or suggestions in the CurseForge comments.</p>
 
 <h2 style="color: #73c9c4;">Changelog</h2>
+
+<p><strong>Post-release updates</strong></p>
+
+<ul>
+  <li>Show the active lure's fishing bonus and remaining time, and show the missing-lure reminder only when no lure is attached.</li>
+  <li>Track catches from fishing loot messages, loot slots and bag changes without counting the same catch twice.</li>
+  <li>Keep catch rows visible when the client's legacy item-info API is unavailable.</li>
+</ul>
 
 <p><strong>1.0.0 - Initial release</strong></p>
 
