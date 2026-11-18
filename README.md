@@ -16,6 +16,7 @@
   <li>Shows each item's most common fishing area across the saved history in all three tabs, including its subzone when available.</li>
   <li>Rows start sorted by quantity, highest first. Click a column heading to sort its rows; click it again to reverse the order. Switching tabs restores the default sort.</li>
   <li>Shows Auctionator auction prices for each item and their totals in all three tabs, plus estimated auction value per hour. Missing auction prices appear as a dash.</li>
+  <li>Tracks one session goal for a fish count, fishing time or Fishing skill, with progress in both window modes and an achievement-style completion alert.</li>
 </ul>
 
 <h2 style="color: #c78be6;">Fishing and lures</h2>
@@ -29,6 +30,12 @@
 <p>Drag the unlocked window to move it; <strong>Lock fishing window</strong> prevents dragging. <strong>Reset position</strong> returns it to the screen center. The current area and its last fishing time appear below the title. A session ends when you unequip the pole; equipping it again starts an empty new session. Earlier catches remain under <strong>History here</strong> and <strong>History overall</strong>. Fishing history, session records and settings are saved per character.</p>
 
 <p>Click the left arrow beside the timer to switch to Compact Mode. It keeps the timer and lure status visible while the window shrinks from its right edge; the upper-left corner stays fixed. Click the right arrow to restore the full window. The mode is saved per character.</p>
+
+<p>Click <strong>Goal...</strong> in the full window to set a target catch count, fishing time, or Fishing skill. For a fish goal, enter a known fish name, item ID or item link. You can also click the small target beside any recorded catch, or right-click its row, to fill in that item. The time goal defaults to ten minutes.</p>
+
+<p>One goal can be active at a time. Its bar sits below the AH totals and uses the same fill texture as LH ExpBar. Fish goals show catches in the current session; time goals count while a pole is equipped after the session's first cast. Skill goals show points gained toward the difference between the session's starting Fishing skill and the target, such as +4 / +10 when progressing from 140 to 150. The selected goal stays in place for a new session while its progress resets. If the target skill is already reached, the skill goal remains complete.</p>
+
+<p>Compact Mode shows the goal bar at the bottom with a percentage; hover over it for details. Completing a goal plays an achievement-style animated alert. The goal is saved per character; use <strong>Clear goal</strong> to remove it.</p>
 
 <p><strong>Reset history</strong> in the LH Fishing settings asks for confirmation before deleting this character's saved catches, sessions and area history. It keeps the window position and fishing settings.</p>
 
@@ -57,6 +64,7 @@
 <p><strong>Post-release updates</strong></p>
 
 <ul>
+  <li>Add per-character goals for a catch count, fishing time or Fishing skill, with row shortcuts, session-based progress bars and an animated completion alert.</li>
   <li>Flash the caught item's quantity and its background once for one second.</li>
   <li>Add a compact view with the session timer, lure status and a button to restore the full window.</li>
   <li>Show AH prices without vendor columns, add the most common fishing area with subzone, and sort any column by clicking its heading.</li>

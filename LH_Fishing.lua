@@ -1,4 +1,5 @@
 local ADDON = ...
+local GOAL_TEXTURE = "Interface\\AddOns\\LH_Fishing\\Media\\Smooth.tga"
 local Fishing = {}
 LH_Fishing = Fishing
 
@@ -17,6 +18,9 @@ local LURE_ITEM_BONUS = {
     [6811] = 50, [6530] = 50, [6529] = 25,
 }
 local frame, titleText, locationText, totalText, rateText, lureReminder, modeButton
+local goalText, goalBarFrame, goalBar, goalBarLabel, goalButton, goalEditor
+local goalItemInput, goalCountInput, goalHoursInput, goalMinutesInput, goalSkillInput, goalSkillCurrent
+local goalToast
 local scrollChild, timerText, headings, headerLabels, headerButtons, sumRow, measureText
 local rows, active, cast, bindingOwner = {}, false
 local catchFlashUntil = {}
@@ -222,6 +226,250 @@ local function MeasuredWidth(value)
     measureText:SetText(value)
     return math.ceil(measureText:GetStringWidth() or 0) + 4
 end
+local function GoalTime(seconds)
+    seconds = math.floor(math.max(0, seconds or 0))
+    local hours, minutes = math.floor(seconds / 3600), math.floor(seconds / 60) % 60
+    if hours > 0 then return string.format("%d:%02d:%02d", hours, minutes, seconds % 60) end
+    return string.format("%02d:%02d", minutes, seconds % 60)
+end
+local function ShowGoalToast(goal)
+    if not goalToast then
+        local toast = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        toast:SetSize(320, 104)
+        toast:SetPoint("CENTER", UIParent, "CENTER", 0, 170)
+        toast:SetFrameStrata("FULLSCREEN_DIALOG")
+        toast:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Gold-Border", edgeSize = 18,
+            insets = {left = 7, right = 7, top = 7, bottom = 7}})
+        toast:SetBackdropColor(0.12, 0.07, 0.025, 0.96)
+        local function Atlas(texture, name)
+            if texture.SetAtlas then pcall(texture.SetAtlas, texture, name) end
+        end
+        local background = toast:CreateTexture(nil, "BACKGROUND")
+        background:SetAllPoints(toast)
+        Atlas(background, "ui-achievement-guild-background")
+        local icon = toast:CreateTexture(nil, "ARTWORK")
+        icon:SetSize(48, 48)
+        icon:SetPoint("TOPLEFT", toast, "TOPLEFT", 17, -34)
+        toast.icon = icon
+        local iconFrame = toast:CreateTexture(nil, "OVERLAY")
+        iconFrame:SetSize(70, 68)
+        iconFrame:SetPoint("CENTER", icon, "CENTER", 0, 0)
+        Atlas(iconFrame, "ui-achievement-guild-iconframe")
+        local shield = toast:CreateTexture(nil, "ARTWORK")
+        shield:SetSize(62, 62)
+        shield:SetPoint("TOPRIGHT", toast, "TOPRIGHT", -10, -31)
+        Atlas(shield, "ui-achievement-shield-1")
+        local title = toast:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", toast, "TOP", 0, -13)
+        title:SetText("LH Fishing")
+        local heading = toast:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        heading:SetPoint("TOPLEFT", toast, "TOPLEFT", 75, -36)
+        heading:SetText("GOAL COMPLETED")
+        heading:SetTextColor(1, 0.82, 0.35, 1)
+        local name = toast:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        name:SetSize(165, 36)
+        name:SetPoint("TOPLEFT", toast, "TOPLEFT", 75, -55)
+        name:SetJustifyH("CENTER")
+        name:SetJustifyV("MIDDLE")
+        toast.name = name
+        local glow = toast:CreateTexture(nil, "OVERLAY")
+        glow:SetSize(320, 104)
+        glow:SetPoint("CENTER", toast, "CENTER")
+        glow:SetBlendMode("ADD")
+        Atlas(glow, "ui-achievement-guild-glow")
+        local glowAnim = glow:CreateAnimationGroup()
+        local glowIn = glowAnim:CreateAnimation("Alpha")
+        glowIn:SetFromAlpha(0); glowIn:SetToAlpha(1); glowIn:SetDuration(0.2); glowIn:SetOrder(1)
+        local glowOut = glowAnim:CreateAnimation("Alpha")
+        glowOut:SetFromAlpha(1); glowOut:SetToAlpha(0); glowOut:SetDuration(0.6); glowOut:SetOrder(2)
+        glowAnim:SetScript("OnFinished", function() glow:Hide() end)
+        toast.glow, toast.glowAnim = glow, glowAnim
+        local shine = toast:CreateTexture(nil, "OVERLAY")
+        shine:SetSize(80, 100)
+        shine:SetPoint("BOTTOMLEFT", toast, "BOTTOMLEFT", 0, 2)
+        shine:SetBlendMode("ADD")
+        Atlas(shine, "ui-achievement-guild-shine")
+        local shineAnim = shine:CreateAnimationGroup()
+        local shineIn = shineAnim:CreateAnimation("Alpha")
+        shineIn:SetFromAlpha(0); shineIn:SetToAlpha(1); shineIn:SetDuration(0.2); shineIn:SetOrder(1)
+        local sweep = shineAnim:CreateAnimation("Translation")
+        sweep:SetOffset(240, 0); sweep:SetDuration(0.9); sweep:SetOrder(2)
+        local shineOut = shineAnim:CreateAnimation("Alpha")
+        shineOut:SetFromAlpha(1); shineOut:SetToAlpha(0); shineOut:SetDuration(0.5); shineOut:SetOrder(3)
+        shineAnim:SetScript("OnFinished", function() shine:Hide() end)
+        toast.shine, toast.shineAnim = shine, shineAnim
+        local intro = toast:CreateAnimationGroup()
+        local fadeIn = intro:CreateAnimation("Alpha")
+        fadeIn:SetFromAlpha(0); fadeIn:SetToAlpha(1); fadeIn:SetDuration(0.25)
+        toast.intro = intro
+        local outro = toast:CreateAnimationGroup()
+        local fadeOut = outro:CreateAnimation("Alpha")
+        fadeOut:SetFromAlpha(1); fadeOut:SetToAlpha(0); fadeOut:SetDuration(1)
+        outro:SetScript("OnFinished", function() toast:Hide() end)
+        toast.outro = outro
+        toast:SetScript("OnUpdate", function(self, dt)
+            self.remaining = (self.remaining or 0) - dt
+            if self.remaining <= 0 and not self.outro:IsPlaying() then self.outro:Play() end
+        end)
+        toast:Hide()
+        goalToast = toast
+    end
+    local toast = goalToast
+    if goal.kind == "fish" then
+        local icon = C_Item and C_Item.GetItemIconByID or GetItemIcon
+        local ok, texture = icon and pcall(icon, goal.id)
+        if issecretvalue and issecretvalue(texture) then texture = nil end
+        toast.icon:SetTexture(ok and texture or "Interface\\Icons\\Trade_Fishing")
+        toast.name:SetText(string.format("Catch %d %s", goal.target, goal.name or ("Item " .. goal.id)))
+    elseif goal.kind == "skill" then
+        toast.icon:SetTexture("Interface\\Icons\\Trade_Fishing")
+        toast.name:SetText("Fishing skill " .. goal.target)
+    else
+        toast.icon:SetTexture("Interface\\Icons\\Trade_Fishing")
+        toast.name:SetText("Fish for " .. GoalTime(goal.target))
+    end
+    toast.remaining = 4
+    toast.outro:Stop()
+    toast.intro:Stop()
+    toast.glowAnim:Stop()
+    toast.shineAnim:Stop()
+    toast:SetAlpha(1)
+    toast:Show()
+    toast.intro:Play()
+    toast.glow:Show(); toast.glowAnim:Play()
+    toast.shine:Show(); toast.shineAnim:Play()
+    if PlaySound then pcall(PlaySound, 12891, "Master") end
+end
+local function GoalProgress(goal)
+    if not currentSession then return 0 end
+    if goal.kind == "fish" then return currentSession.items[goal.id] or 0 end
+    if goal.kind == "skill" then
+        local skill = FishingSkill()
+        if skill <= 0 then return 0 end
+        if not goal.startSkill then
+            goal.startSkill = skill
+            if skill >= goal.target then goal.reached = true end
+        end
+        if goal.startSkill >= goal.target then return 1 end
+        return math.max(0, skill - goal.startSkill)
+    end
+    return currentSession.seconds or 0
+end
+local function UpdateGoalDisplay()
+    local goal = LH_FishingDB.goal
+    if not goal then
+        goalText:SetText("Goal: none")
+        goalText:SetTextColor(1, 0.75, 0.3, 1)
+        goalBarFrame:Hide()
+        return
+    end
+    local progress = GoalProgress(goal)
+    local maximum = goal.kind == "skill" and math.max(1, goal.target - (goal.startSkill or 0)) or goal.target
+    if not goal.reached and progress >= maximum then
+        goal.reached = true
+        ShowGoalToast(goal)
+    end
+    if goal.kind == "fish" then
+        goalText:SetText("Goal: " .. (goal.name or ("Item " .. goal.id)))
+        goalBarLabel:SetText(string.format("%d / %d", progress, goal.target))
+    elseif goal.kind == "skill" then
+        goalText:SetText("Goal: Fishing skill")
+        goalBarLabel:SetText(string.format("+%d / +%d  (%d / %d)", progress, maximum,
+            (goal.startSkill or 0) + progress, goal.target))
+    else
+        goalText:SetText("Goal: Fishing time")
+        goalBarLabel:SetText(GoalTime(progress) .. " / " .. GoalTime(goal.target))
+    end
+    goalText:SetTextColor(goal.reached and 0.35 or 1, goal.reached and 1 or 0.75, 0.3, 1)
+    goalBar:SetMinMaxValues(0, maximum)
+    goalBar:SetValue(math.min(progress, maximum))
+    goalBar:SetStatusBarColor(goal.reached and 0.35 or 1, goal.reached and 0.9 or 0.75, 0.15, 1)
+    goalBarFrame:ClearAllPoints()
+    if LH_FishingDB.compact then
+        goalBarFrame:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 6, 5)
+        goalBarFrame:SetSize(frame:GetWidth() - 12, 13)
+        goalBarLabel:SetText(string.format("%d%%", math.min(100, math.floor(progress * 100 / maximum + 0.5))))
+    else
+        local labelWidth = math.min(300, MeasuredWidth(goalText:GetText()))
+        goalText:SetWidth(labelWidth)
+        local x = 12 + labelWidth + 8
+        goalBarFrame:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", x, 10)
+        goalBarFrame:SetSize(math.max(80, frame:GetWidth() - x - 12), 20)
+    end
+    goalBarFrame:Show()
+end
+local function ShowGoalEditor(id, name)
+    local goal = LH_FishingDB.goal
+    if not id and goal then
+        if goal.kind == "fish" then
+            id, name = goal.id, goal.name
+            goalCountInput:SetText(tostring(goal.target))
+        elseif goal.kind == "time" then
+            goalItemInput:SetText("")
+            goalItemInput.itemID, goalItemInput.itemName = nil, nil
+            goalHoursInput:SetText(tostring(math.floor(goal.target / 3600)))
+            goalMinutesInput:SetText(tostring(math.floor(goal.target / 60) % 60))
+        else
+            goalSkillInput:SetText(tostring(goal.target))
+        end
+    end
+    local skill = FishingSkill()
+    goalSkillCurrent:SetText("Current Fishing skill: " .. (skill > 0 and skill or "unknown"))
+    if id then
+        goalItemInput:SetText(name or tostring(id))
+        goalItemInput.itemID = id
+        goalItemInput.itemName = name
+    end
+    goalEditor:Show()
+    if id then goalCountInput:SetFocus() end
+end
+local function ResolveGoalItem(value)
+    local id = tonumber(value:match("item:(%d+)") or value:match("^%s*(%d+)%s*$"))
+    local itemInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
+    local name
+    if id then
+        if itemInfo then
+            local ok, foundName = pcall(itemInfo, id)
+            if ok and type(foundName) == "string" and not (issecretvalue and issecretvalue(foundName)) then
+                name = foundName
+            end
+        end
+        return id, name or value:match("%[(.-)%]")
+    end
+    local wanted = value:match("^%s*(.-)%s*$"):lower()
+    if wanted == "" then return nil end
+    for caughtID, count in pairs(LH_FishingDB.items) do
+        if type(count) == "number" and count > 0 then
+            local caughtName = LH_FishingDB.itemNames[caughtID]
+            if not caughtName and itemInfo then
+                local ok, caughtName = pcall(itemInfo, caughtID)
+                if ok and type(caughtName) == "string" and not (issecretvalue and issecretvalue(caughtName)) then
+                    LH_FishingDB.itemNames[caughtID] = caughtName
+                end
+            end
+            caughtName = LH_FishingDB.itemNames[caughtID]
+            if type(caughtName) == "string" and caughtName:lower() == wanted then return caughtID, caughtName end
+        end
+    end
+    if itemInfo then
+        local ok, foundName, link = pcall(itemInfo, value)
+        if ok and type(link) == "string" and not (issecretvalue and issecretvalue(link)) then
+            id = tonumber(link:match("item:(%d+)"))
+            if id then
+                name = type(foundName) == "string" and not (issecretvalue and issecretvalue(foundName))
+                    and foundName or value
+                return id, name
+            end
+        end
+    end
+    local instant = C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant
+    if instant then
+        local ok, foundID = pcall(instant, value)
+        if ok and type(foundID) == "number" and not (issecretvalue and issecretvalue(foundID))
+            and foundID > 0 then return foundID, value end
+    end
+end
 local function UpdateCatchFlashes()
     local now = GetTime()
     for id, expires in pairs(catchFlashUntil) do
@@ -247,8 +495,9 @@ local function Refresh()
     timerText:SetText(SessionTime())
     if LH_FishingDB.compact then
         local compactWidth = math.max(230, MeasuredWidth(lureReminder:GetText()) + 24)
-        if not Combat() then frame:SetSize(compactWidth, 72) end
+        if not Combat() then frame:SetSize(compactWidth, LH_FishingDB.goal and 82 or 72) end
         lureReminder:SetWidth(frame:GetWidth() - 24)
+        UpdateGoalDisplay()
         return
     end
     local showReminder = lureReminder:IsShown()
@@ -344,7 +593,8 @@ local function Refresh()
         end
         if type(name) ~= "string" or (issecretvalue and issecretvalue(name)) then name = nil end
         if issecretvalue and issecretvalue(icon) then icon = nil end
-        entry.name = name or ("Item %d"):format(entry.id)
+        if name then LH_FishingDB.itemNames[entry.id] = name end
+        entry.name = name or LH_FishingDB.itemNames[entry.id] or ("Item %d"):format(entry.id)
         entry.icon = icon
         entry.auctionPrice = Price(entry.id)
         entry.area = commonAreas[entry.id]
@@ -365,7 +615,7 @@ local function Refresh()
     end)
     local auctionTotal, auctionUnitTotal = 0, 0
     local auctionKnown, quantityTotal = false, 0
-    local widths = {190, 30, 70, 62, 62, 130}
+    local widths = {210, 30, 70, 62, 62, 130}
     for column, label in ipairs(headerLabels) do
         widths[column] = math.max(widths[column], MeasuredWidth(label:GetText()) + (sortColumn == column and 18 or 0))
     end
@@ -381,6 +631,31 @@ local function Refresh()
             row.qtyFlash = row:CreateTexture(nil, "BACKGROUND")
             row.qtyFlash:SetSize(30, 19)
             row.qtyFlash:Hide()
+            row.goalButton = CreateFrame("Button", nil, row)
+            row.goalButton:SetSize(16, 16)
+            local crosshair = {{4, 1, -5, 0}, {4, 1, 5, 0}, {1, 4, 0, 5},
+                {1, 4, 0, -5}, {2, 2, 0, 0}}
+            for _, part in ipairs(crosshair) do
+                local mark = row.goalButton:CreateTexture(nil, "ARTWORK")
+                mark:SetSize(part[1], part[2])
+                mark:SetPoint("CENTER", row.goalButton, "CENTER", part[3], part[4])
+                mark:SetColorTexture(1, 0.75, 0.15, 1)
+            end
+            local hover = row.goalButton:CreateTexture(nil, "HIGHLIGHT")
+            hover:SetAllPoints(row.goalButton)
+            hover:SetColorTexture(1, 0.75, 0.15, 0.2)
+            row.goalButton:SetScript("OnClick", function(self)
+                ShowGoalEditor(self.itemID, self.itemName)
+            end)
+            row.goalButton:SetScript("OnEnter", function(self)
+                if not GameTooltip then return end
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText("Set fish goal: " .. (self.itemName or "Item"))
+                GameTooltip:Show()
+            end)
+            row.goalButton:SetScript("OnLeave", function(self)
+                if GameTooltip and GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+            end)
             row:EnableMouse(true)
             row:SetScript("OnEnter", function(self)
                 if not self.itemID or not GameTooltip then return end
@@ -390,16 +665,23 @@ local function Refresh()
                 else
                     GameTooltip:SetHyperlink("item:" .. self.itemID)
                 end
+                GameTooltip:AddLine("Right-click to set a fish goal", 1, 0.75, 0.15)
                 GameTooltip:Show()
             end)
             row:SetScript("OnLeave", function(self)
                 if GameTooltip and GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+            end)
+            row:SetScript("OnMouseUp", function(self, button)
+                if button == "RightButton" then ShowGoalEditor(self.itemID, self.itemName) end
             end)
             row.cells = {}
             for column = 1, 6 do row.cells[column] = Text(row, 11, "LEFT", 0, 0, 10) end
             rows[index] = row
         end
         row.itemID = entry.id
+        row.itemName = entry.name
+        row.goalButton.itemID = entry.id
+        row.goalButton.itemName = entry.name
         row.icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
         local localCount = chanceItems[entry.id] or 0
         local auctionPrice = entry.auctionPrice
@@ -412,7 +694,7 @@ local function Refresh()
         for column, value in ipairs(values) do
             row.cells[column]:SetText(value)
             if column == 1 then
-                widths[column] = math.max(widths[column], math.min(205, MeasuredWidth(value)))
+                widths[column] = math.max(widths[column], math.min(225, MeasuredWidth(value) + 20))
             else
                 widths[column] = math.max(widths[column], MeasuredWidth(value))
             end
@@ -456,7 +738,7 @@ local function Refresh()
         footerWidths[1] + footerWidths[2] + 36 + (showReminder and reminderWidth + 12 or 0))
     if not Combat() then
         frame:SetWidth(frameWidth)
-        frame:SetHeight(117 + (#entries + 1) * 21 + 35)
+        frame:SetHeight(117 + (#entries + 1) * 21 + 65)
     end
     lureReminder:SetWidth(math.max(1, reminderWidth))
     headings:SetWidth(tableWidth)
@@ -471,7 +753,12 @@ local function Refresh()
     end
     for _, row in ipairs(rows) do
         row:SetWidth(tableWidth)
-        for column, cell in ipairs(row.cells) do SetCell(cell, row, offsets[column], widths[column]) end
+        for column, cell in ipairs(row.cells) do
+            SetCell(cell, row, offsets[column], widths[column] - (column == 1 and 20 or 0))
+        end
+        local nameWidth = math.min(widths[1] - 20, MeasuredWidth(row.cells[1]:GetText()) - 4)
+        row.goalButton:ClearAllPoints()
+        row.goalButton:SetPoint("LEFT", row, "LEFT", offsets[1] + nameWidth + 4, 0)
         SetCell(row.qtyFlash, row, offsets[2], widths[2])
     end
     sumRow:SetWidth(tableWidth)
@@ -483,11 +770,12 @@ local function Refresh()
     local x = 12
     for index, footer in ipairs(footers) do
         footer:ClearAllPoints()
-        footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", x, 12)
+        footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", x, 42)
         footer:SetWidth(footerWidths[index])
         footer:SetJustifyH("LEFT")
         x = x + footerWidths[index] + 12
     end
+    UpdateGoalDisplay()
     UpdateCatchFlashes()
 end
 
@@ -504,6 +792,9 @@ local function SetCompactMode(compact)
     local standard = not LH_FishingDB.compact
     titleText:SetShown(standard)
     locationText:SetShown(standard)
+    goalText:SetShown(standard)
+    goalButton:SetShown(standard)
+    if not standard then goalEditor:Hide() end
     headings:SetShown(standard)
     scrollChild:SetShown(standard)
     totalText:SetShown(standard)
@@ -521,7 +812,7 @@ local function SetCompactMode(compact)
     end
     lureReminder:ClearAllPoints()
     if standard then
-        lureReminder:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 12)
+        lureReminder:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 42)
         lureReminder:SetJustifyH("RIGHT")
     else
         lureReminder:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -48)
@@ -599,6 +890,14 @@ local function StartSession()
     LH_FishingDB.sessions[#LH_FishingDB.sessions + 1] = session
     currentSession = session
     catchFlashUntil = {}
+    if LH_FishingDB.goal then
+        LH_FishingDB.goal.reached = false
+        if LH_FishingDB.goal.kind == "skill" then
+            local skill = FishingSkill()
+            LH_FishingDB.goal.startSkill = skill > 0 and skill or nil
+            if skill >= LH_FishingDB.goal.target then LH_FishingDB.goal.reached = true end
+        end
+    end
     activeTab = "session"
     sortColumn, sortAscending = 2, false
 end
@@ -620,6 +919,7 @@ local function UpdateActive()
         pendingLureID = nil
     end
     if frame then frame:SetShown(active) end
+    if not active and goalEditor then goalEditor:Hide() end
     if not active then channeling, retryCast = false, false end
     ApplyBinding()
     if active then
@@ -630,11 +930,21 @@ end
 local function CreateUI()
     LH_FishingDB = type(LH_FishingDB) == "table" and LH_FishingDB or {}
     LH_FishingDB.items = type(LH_FishingDB.items) == "table" and LH_FishingDB.items or {}
+    LH_FishingDB.itemNames = type(LH_FishingDB.itemNames) == "table" and LH_FishingDB.itemNames or {}
     LH_FishingDB.waters = type(LH_FishingDB.waters) == "table" and LH_FishingDB.waters or {}
     LH_FishingDB.sessions = type(LH_FishingDB.sessions) == "table" and LH_FishingDB.sessions or {}
     LH_FishingDB.locked = LH_FishingDB.locked == true
     LH_FishingDB.autoLure = LH_FishingDB.autoLure ~= false
     LH_FishingDB.compact = LH_FishingDB.compact == true
+    local goal = LH_FishingDB.goal
+    if type(goal) ~= "table" or (goal.kind ~= "fish" and goal.kind ~= "time" and goal.kind ~= "skill")
+        or type(goal.target) ~= "number" or goal.target <= 0
+        or (goal.kind == "fish" and type(goal.id) ~= "number")
+        or (goal.kind == "skill" and goal.startSkill ~= nil and type(goal.startSkill) ~= "number") then
+        LH_FishingDB.goal = nil
+    else
+        goal.progress = nil
+    end
     LH_LayoutProfiles:Register(ADDON, LH_FishingDB, LH_FishingDB, {"position", "locked", "autoLure", "compact"})
     bindingOwner = CreateFrame("Frame")
     cast = CreateFrame("Button", "LH_FishingCastButton", UIParent, "SecureActionButtonTemplate")
@@ -685,6 +995,54 @@ local function CreateUI()
     modeButton.arrow:SetPoint("CENTER")
     modeButton:SetScript("OnClick", function() SetCompactMode(not LH_FishingDB.compact) end)
     locationText = Text(frame, 11, "TOPLEFT", 12, -40, 666)
+    goalText = Text(frame, 11, "BOTTOMLEFT", 12, 15, 300)
+    goalText:SetWordWrap(false)
+    goalBarFrame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    goalBarFrame:SetSize(200, 20)
+    goalBarFrame:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 8, insets = {left = 2, right = 2, top = 2, bottom = 2}})
+    goalBarFrame:SetBackdropColor(0, 0, 0, 0.8)
+    goalBarFrame:SetBackdropBorderColor(0.65, 0.59, 0.45, 1)
+    goalBarFrame:EnableMouse(true)
+    goalBarFrame:SetScript("OnEnter", function(self)
+        if not GameTooltip or not LH_FishingDB.goal then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(goalText:GetText())
+        local goal = LH_FishingDB.goal
+        local progress = GoalProgress(goal)
+        local detail
+        if goal.kind == "fish" then
+            detail = string.format("%d / %d", progress, goal.target)
+        elseif goal.kind == "skill" then
+            detail = string.format("+%d / +%d  (%d / %d)", progress,
+                math.max(1, goal.target - (goal.startSkill or 0)), (goal.startSkill or 0) + progress, goal.target)
+        else
+            detail = GoalTime(progress) .. " / " .. GoalTime(goal.target)
+        end
+        GameTooltip:AddLine(detail, 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    goalBarFrame:SetScript("OnLeave", function(self)
+        if GameTooltip and GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+    end)
+    goalBar = CreateFrame("StatusBar", nil, goalBarFrame)
+    goalBar:SetPoint("TOPLEFT", goalBarFrame, "TOPLEFT", 3, -3)
+    goalBar:SetPoint("BOTTOMRIGHT", goalBarFrame, "BOTTOMRIGHT", -3, 3)
+    goalBar:SetStatusBarTexture(GOAL_TEXTURE)
+    goalBar:SetStatusBarColor(1, 0.75, 0.15, 1)
+    goalBar:SetMinMaxValues(0, 1)
+    goalBar:SetValue(0)
+    goalBar:EnableMouse(false)
+    goalBarLabel = goalBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    goalBarLabel:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
+    goalBarLabel:SetAllPoints(goalBarFrame)
+    goalBarLabel:SetJustifyH("CENTER")
+    goalBarFrame:Hide()
+    goalButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    goalButton:SetSize(88, 22)
+    goalButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -12, -64)
+    goalButton:SetText("Goal...")
+    goalButton:SetScript("OnClick", function() ShowGoalEditor() end)
     measureText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     measureText:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 11)
     for _, option in ipairs({{"session", 12}, {"history", 165}, {"overall", 318}}) do
@@ -755,11 +1113,118 @@ local function CreateUI()
     separator:SetHeight(1)
     totalText = Text(frame, 11, "BOTTOMLEFT", 12, 12, 200)
     rateText = Text(frame, 11, "BOTTOMLEFT", 220, 12, 250)
-    lureReminder = Text(frame, 11, "BOTTOMRIGHT", -12, 12, 200)
+    lureReminder = Text(frame, 11, "BOTTOMRIGHT", -12, 42, 200)
     lureReminder:SetJustifyH("RIGHT")
     lureReminder:SetTextColor(1, 0.75, 0.15, 1)
     lureReminder:SetText("No fishing lure in your bags.")
     lureReminder:Hide()
+    goalEditor = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    goalEditor:SetSize(440, 280)
+    goalEditor:SetPoint("CENTER", frame, "CENTER")
+    goalEditor:SetFrameStrata("DIALOG")
+    goalEditor:SetClampedToScreen(true)
+    goalEditor:EnableMouse(true)
+    goalEditor:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 8, insets = {left = 2, right = 2, top = 2, bottom = 2}})
+    goalEditor:SetBackdropColor(0, 0, 0, 0.9)
+    goalEditor:SetBackdropBorderColor(0.65, 0.59, 0.45, 1)
+    local editorTitle = Text(goalEditor, 14, "TOPLEFT", 12, -12, 300)
+    editorTitle:SetText("Set fishing goal")
+    editorTitle:SetTextColor(1, 0.75, 0.15, 1)
+    local fishLabel = Text(goalEditor, 11, "TOPLEFT", 12, -42, 250)
+    fishLabel:SetText("Fish name, item ID or link")
+    local countLabel = Text(goalEditor, 11, "TOPLEFT", 285, -42, 80)
+    countLabel:SetText("Quantity")
+    local function EditBox(x, y, width, numeric)
+        local edit = CreateFrame("EditBox", nil, goalEditor, "InputBoxTemplate")
+        edit:SetSize(width, 20)
+        edit:SetPoint("TOPLEFT", goalEditor, "TOPLEFT", x, y)
+        edit:SetAutoFocus(false)
+        if numeric then edit:SetNumeric(true) end
+        edit:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+        edit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+        return edit
+    end
+    local function ActionButton(label, x, y, width, onClick)
+        local button = CreateFrame("Button", nil, goalEditor, "UIPanelButtonTemplate")
+        button:SetSize(width, 22)
+        button:SetPoint("TOPLEFT", goalEditor, "TOPLEFT", x, y)
+        button:SetText(label)
+        button:SetScript("OnClick", onClick)
+        return button
+    end
+    goalItemInput = EditBox(18, -61, 245)
+    goalItemInput:SetScript("OnTextChanged", function(self, userInput)
+        if userInput then self.itemID, self.itemName = nil, nil end
+    end)
+    goalCountInput = EditBox(290, -61, 55, true)
+    goalCountInput:SetText("10")
+    ActionButton("Set fish", 355, -60, 75, function()
+        local value = goalItemInput:GetText()
+        local id, name = goalItemInput.itemID, goalItemInput.itemName
+        if not id then id, name = ResolveGoalItem(value) end
+        local target = tonumber(goalCountInput:GetText())
+        if not id or id < 1 or not target or target < 1 then
+            if UIErrorsFrame then UIErrorsFrame:AddMessage("Enter a known fish name, item ID or link, and a quantity.", 1, 0.3, 0.3) end
+            return
+        end
+        LH_FishingDB.goal = {kind = "fish", id = id, name = name, target = target, reached = false}
+        goalEditor:Hide()
+        Refresh()
+    end)
+    local timeLabel = Text(goalEditor, 11, "TOPLEFT", 12, -99, 250)
+    timeLabel:SetText("Fishing time")
+    local hoursLabel = Text(goalEditor, 11, "TOPLEFT", 12, -120, 60)
+    hoursLabel:SetText("Hours")
+    local minutesLabel = Text(goalEditor, 11, "TOPLEFT", 102, -120, 65)
+    minutesLabel:SetText("Minutes")
+    goalHoursInput = EditBox(18, -140, 55, true)
+    goalMinutesInput = EditBox(108, -140, 55, true)
+    goalHoursInput:SetText("0")
+    goalMinutesInput:SetText("10")
+    ActionButton("Set time", 180, -139, 95, function()
+        local hours = tonumber(goalHoursInput:GetText()) or 0
+        local minutes = tonumber(goalMinutesInput:GetText()) or 0
+        local target = hours * 3600 + minutes * 60
+        if target < 60 then
+            if UIErrorsFrame then UIErrorsFrame:AddMessage("Enter at least one minute.", 1, 0.3, 0.3) end
+            return
+        end
+        LH_FishingDB.goal = {kind = "time", target = target, reached = false}
+        goalEditor:Hide()
+        Refresh()
+    end)
+    goalSkillCurrent = Text(goalEditor, 11, "TOPLEFT", 12, -180, 250)
+    local skillLabel = Text(goalEditor, 11, "TOPLEFT", 12, -200, 100)
+    skillLabel:SetText("Target skill")
+    goalSkillInput = EditBox(18, -220, 55, true)
+    local initialSkill = FishingSkill()
+    if initialSkill > 0 then goalSkillInput:SetText(tostring(initialSkill + 10)) end
+    ActionButton("Set skill", 95, -219, 95, function()
+        local skill = FishingSkill()
+        local target = tonumber(goalSkillInput:GetText())
+        if skill <= 0 or not target or target <= skill then
+            if UIErrorsFrame then UIErrorsFrame:AddMessage("Enter a Fishing skill above your current skill.", 1, 0.3, 0.3) end
+            return
+        end
+        LH_FishingDB.goal = {kind = "skill", target = target, startSkill = skill, reached = false}
+        goalEditor:Hide()
+        Refresh()
+    end)
+    ActionButton("Clear goal", 12, -249, 100, function()
+        LH_FishingDB.goal = nil
+        goalItemInput:SetText("")
+        goalItemInput.itemID, goalItemInput.itemName = nil, nil
+        goalCountInput:SetText("10")
+        goalHoursInput:SetText("0")
+        goalMinutesInput:SetText("10")
+        local skill = FishingSkill()
+        goalSkillInput:SetText(skill > 0 and tostring(skill + 10) or "")
+        goalEditor:Hide()
+        Refresh()
+    end)
+    ActionButton("Close", 345, -249, 80, function() goalEditor:Hide() end)
+    goalEditor:Hide()
     RestorePosition()
     frame:Hide()
     SetCompactMode(LH_FishingDB.compact)
@@ -794,6 +1259,7 @@ end
 function Fishing:ResetHistory()
     if not LH_FishingDB then return end
     LH_FishingDB.items = {}
+    LH_FishingDB.itemNames = {}
     LH_FishingDB.waters = {}
     LH_FishingDB.sessions = {}
     LH_FishingDB.fishingSeconds = nil
@@ -995,5 +1461,8 @@ events:SetScript("OnUpdate", function(_, dt)
             Refresh()
         end
         if next(catchFlashUntil) then UpdateCatchFlashes() end
+        if LH_FishingDB.goal and (LH_FishingDB.goal.kind == "time" or LH_FishingDB.goal.kind == "skill") then
+            UpdateGoalDisplay()
+        end
     end
 end)
