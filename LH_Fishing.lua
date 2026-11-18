@@ -22,7 +22,7 @@ local rows, active, cast, bindingOwner = {}, false
 local tabs, activeTab, currentSession = {}, "session"
 local channeling, lastLoot = false, 0
 local channelStoppedAt = 0
-local bagCounts, pendingFishLootUntil, pendingDirect, pendingBag = {}, 0, {}, {}
+local bagCounts, pendingFishLootUntil, catchSources = {}, 0, {}
 local castAt, retryCast = 0, false
 local EARLY_RECAST_SECONDS = 2
 local elapsed, currentLocation, pendingBindings = 0
@@ -459,13 +459,13 @@ local function UpdateActive()
     if active then
         bagCounts = CountBags()
         pendingLureID = nil
-        pendingFishLootUntil, pendingDirect, pendingBag = 0, {}, {}
+        pendingFishLootUntil, catchSources = 0, {}
         castAt, channelStoppedAt = 0, 0
         StartSession()
     elseif currentSession then
         currentSession.endedAt = time()
         currentSession = nil
-        pendingFishLootUntil, pendingDirect, pendingBag = 0, {}, {}
+        pendingFishLootUntil, catchSources = 0, {}
         castAt, channelStoppedAt = 0, 0
         pendingLureID = nil
     end
@@ -609,7 +609,7 @@ function Fishing:ResetHistory()
     currentSession = nil
     lastLoot = 0
     bagCounts = CountBags()
-    pendingFishLootUntil, pendingDirect, pendingBag = 0, {}, {}
+    pendingFishLootUntil, catchSources = 0, {}
     if not channeling then castAt = 0 end
     channelStoppedAt = 0
     if active then
@@ -639,6 +639,20 @@ local function RecordCatch(id, count)
         place.total = place.total + count
     end
 end
+local function ObserveCatch(id, count, source)
+    if not active or not id or count <= 0 then return false end
+    local seen = catchSources[id]
+    if not seen then
+        seen = {bag = 0, loot = 0, chat = 0, recorded = 0}
+        catchSources[id] = seen
+    end
+    seen[source] = seen[source] + count
+    local total = math.max(seen.bag, seen.loot, seen.chat)
+    if total <= seen.recorded then return false end
+    RecordCatch(id, total - seen.recorded)
+    seen.recorded = total
+    return true
+end
 local function ScanBagChanges()
     local current = CountBags()
     local found = false
@@ -655,14 +669,7 @@ local function ScanBagChanges()
             for id, count in pairs(current) do
                 local gained = count - (bagCounts[id] or 0)
                 if gained > 0 then
-                    local alreadyCounted = math.min(gained, pendingDirect[id] or 0)
-                    pendingDirect[id] = (pendingDirect[id] or 0) - alreadyCounted
-                    gained = gained - alreadyCounted
-                    if gained > 0 then
-                        RecordCatch(id, gained)
-                        pendingBag[id] = (pendingBag[id] or 0) + gained
-                        found = true
-                    end
+                    if ObserveCatch(id, gained, "bag") then found = true end
                 end
             end
         end
@@ -674,7 +681,7 @@ end
 local events = CreateFrame("Frame")
 for _, event in ipairs({"ADDON_LOADED", "PLAYER_ENTERING_WORLD", "PLAYER_EQUIPMENT_CHANGED", "UNIT_INVENTORY_CHANGED",
     "BAG_UPDATE_DELAYED", "SKILL_LINES_CHANGED", "ZONE_CHANGED", "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED_INDOORS",
-    "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_STOP", "UI_INFO_MESSAGE", "UI_ERROR_MESSAGE",
+    "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_STOP", "UI_INFO_MESSAGE", "UI_ERROR_MESSAGE", "CHAT_MSG_LOOT",
     "LOOT_READY", "LOOT_OPENED", "PLAYER_REGEN_ENABLED", "PLAYER_LOGOUT"}) do
     events:RegisterEvent(event)
 end
@@ -684,8 +691,9 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
     if event == "UNIT_SPELLCAST_CHANNEL_START" and a == "player" then
         local name = FishingName()
         if c == 7620 or c == 131474 or (type(c) == "number" and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(c) == name) then
+            if castAt > 0 and ScanBagChanges() then Refresh() end
             channeling, castAt, retryCast = true, GetTime(), false
-            pendingFishLootUntil, pendingDirect, pendingBag = 0, {}, {}
+            pendingFishLootUntil, catchSources = 0, {}
             ApplyBinding()
             local water = Water()
             water.last = time()
@@ -711,11 +719,18 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
             pendingFishLootUntil = 0
             ApplyBinding()
         end
+    elseif event == "CHAT_MSG_LOOT" and active and castAt > 0 and GetTime() - castAt <= 45 then
+        if type(a) == "string" and not (issecretvalue and issecretvalue(a)) then
+            local id = tonumber(a:match("|Hitem:(%d+)"))
+            if id then
+                local count = tonumber(a:match("[xX](%d+)[^%d]*$")) or 1
+                if ObserveCatch(id, count, "chat") then Refresh() end
+            end
+        end
     elseif (event == "LOOT_READY" or event == "LOOT_OPENED") and active then
         local ok, isFishing = pcall(IsFishingLoot or function() return false end)
         local recentCast = castAt > 0 and (channeling or (channelStoppedAt > 0 and GetTime() - channelStoppedAt <= 3))
         if (ok and isFishing) or recentCast then
-            if GetTime() > pendingFishLootUntil then pendingDirect = {} end
             pendingFishLootUntil = GetTime() + 3
             if GetTime() - lastLoot > 2 then
                 local found, sawLoot = false, false
@@ -727,14 +742,7 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
                         sawLoot = true
                         local _, _, count = GetLootSlotInfo(slot)
                         count = math.max(1, tonumber(count) or 1)
-                        local alreadyCounted = math.min(count, pendingBag[id] or 0)
-                        pendingBag[id] = (pendingBag[id] or 0) - alreadyCounted
-                        count = count - alreadyCounted
-                        if count > 0 then
-                            RecordCatch(id, count)
-                            pendingDirect[id] = (pendingDirect[id] or 0) + count
-                            found = true
-                        end
+                        if ObserveCatch(id, count, "loot") then found = true end
                     end
                 end
                 if sawLoot then lastLoot = GetTime() end
