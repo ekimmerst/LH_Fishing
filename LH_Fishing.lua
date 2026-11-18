@@ -109,7 +109,10 @@ local function HasLure()
     return has and true or false
 end
 local function UpdateLureStatus()
-    local has, milliseconds, _, enchantID = GetWeaponEnchantInfo and GetWeaponEnchantInfo()
+    local has, milliseconds, _, enchantID
+    if GetWeaponEnchantInfo then
+        has, milliseconds, _, enchantID = GetWeaponEnchantInfo()
+    end
     local poleID = GetInventoryItemID and GetInventoryItemID("player", 16)
     if knownPoleID ~= poleID then knownLureID, knownEnchantID, knownPoleID = nil, nil, poleID end
     if pendingLureID and GetTime() - (pendingLureAt or 0) > 5 then pendingLureID = nil end
@@ -126,7 +129,7 @@ local function UpdateLureStatus()
             end
             pendingLureID = nil
         end
-        local name = knownLureID and (GetItemInfo(knownLureID) or LURE_NAMES[knownLureID])
+        local name = knownLureID and LURE_NAMES[knownLureID]
             or LURE_ENCHANTS[enchantID] or "Fishing lure"
         local seconds = math.max(0, math.ceil((milliseconds or 0) / 1000))
         key = "active:" .. name
@@ -200,7 +203,7 @@ local function Refresh()
     if not frame then return end
     local water = Water()
     timerText:SetText(SessionTime())
-    local _, showReminder = UpdateLureStatus()
+    local showReminder = lureReminder:IsShown()
     local key = currentLocation
     local historyItems, historyTotal, historySeconds = {}, water.total or 0, 0
     local overallSeconds = LH_FishingDB.fishingSeconds or 0
@@ -637,6 +640,7 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
         local name = FishingName()
         if c == 7620 or c == 131474 or (type(c) == "number" and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(c) == name) then
             channeling, castAt, retryCast = true, GetTime(), false
+            pendingFishLootUntil, pendingDirect = 0, {}
             ApplyBinding()
             local water = Water()
             water.last = time()
@@ -652,6 +656,7 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
     elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" and a == "player" and channeling then
         channeling = false
         channelStoppedAt = GetTime()
+        pendingFishLootUntil = channelStoppedAt + 3
         ApplyBinding()
     elseif (event == "UI_INFO_MESSAGE" or event == "UI_ERROR_MESSAGE") and active then
         local message = type(b) == "string" and b or a
@@ -697,7 +702,9 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
                 end
             end
         end
-        if active and GetTime() <= pendingFishLootUntil then
+        local recentCast = castAt > 0 and (channeling
+            or (channelStoppedAt > 0 and GetTime() - channelStoppedAt <= 3))
+        if active and (GetTime() <= pendingFishLootUntil or recentCast) then
             for id, count in pairs(current) do
                 local gained = count - (bagCounts[id] or 0)
                 if gained > 0 then
