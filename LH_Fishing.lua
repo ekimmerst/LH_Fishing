@@ -6,6 +6,15 @@ local LURES = {
     {6533, 100, 100}, {6532, 75, 100}, {7307, 75, 100},
     {6811, 50, 50}, {6530, 50, 50}, {6529, 25, 0},
 }
+local LURE_NAMES = {
+    [6533] = "Aquadynamic Fish Attractor", [6532] = "Bright Baubles",
+    [7307] = "Flesh Eating Worm", [6811] = "Aquadynamic Fish Lens",
+    [6530] = "Nightcrawlers", [6529] = "Shiny Bauble",
+}
+local LURE_ENCHANTS = {
+    [263] = "Shiny Bauble", [264] = "Fishing lure (+50)",
+    [265] = "Fishing lure (+75)", [266] = "Aquadynamic Fish Attractor",
+}
 local frame, locationText, totalText, vendorTotalText, rateText, lureReminder
 local scrollChild, timerText, headings, headerLabels, sumRow, measureText
 local rows, active, cast, bindingOwner = {}, false
@@ -17,6 +26,7 @@ local castAt, retryCast = 0, false
 local EARLY_RECAST_SECONDS = 2
 local elapsed, currentLocation, pendingBindings = 0
 local refreshElapsed, lureCheckElapsed = 0, 0
+local knownLureID, knownEnchantID, knownPoleID, pendingLureID, pendingLureAt, lureStatusKey
 
 local function SessionPlace(session, key)
     local place = session.places[key]
@@ -98,6 +108,43 @@ local function HasLure()
     local has = GetWeaponEnchantInfo()
     return has and true or false
 end
+local function UpdateLureStatus()
+    local has, milliseconds, _, enchantID = GetWeaponEnchantInfo and GetWeaponEnchantInfo()
+    local poleID = GetInventoryItemID and GetInventoryItemID("player", 16)
+    if knownPoleID ~= poleID then knownLureID, knownEnchantID, knownPoleID = nil, nil, poleID end
+    if pendingLureID and GetTime() - (pendingLureAt or 0) > 5 then pendingLureID = nil end
+    local key, message
+    if has then
+        if knownEnchantID and enchantID and knownEnchantID ~= enchantID then
+            knownLureID, knownEnchantID = nil, nil
+        end
+        if pendingLureID then
+            local expected = ({[6529] = 263, [6530] = 264, [6811] = 264,
+                [6532] = 265, [7307] = 265, [6533] = 266})[pendingLureID]
+            if not enchantID or enchantID == expected then
+                knownLureID, knownEnchantID = pendingLureID, enchantID
+            end
+            pendingLureID = nil
+        end
+        local name = knownLureID and (GetItemInfo(knownLureID) or LURE_NAMES[knownLureID])
+            or LURE_ENCHANTS[enchantID] or "Fishing lure"
+        local seconds = math.max(0, math.ceil((milliseconds or 0) / 1000))
+        key = "active:" .. name
+        message = string.format("%s  %d:%02d remaining", name, math.floor(seconds / 60), seconds % 60)
+        lureReminder:SetTextColor(0.55, 0.82, 1, 1)
+    elseif LH_FishingDB.autoLure and not LureInBags() then
+        knownLureID, knownEnchantID = nil, nil
+        key, message = "missing", "No fishing lure in your bags."
+        lureReminder:SetTextColor(1, 0.75, 0.15, 1)
+    else
+        knownLureID, knownEnchantID = nil, nil
+    end
+    lureReminder:SetShown(message ~= nil)
+    if message then lureReminder:SetText(message) end
+    local changed = key ~= lureStatusKey
+    lureStatusKey = key
+    return changed, message ~= nil
+end
 local function Place()
     local map = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
     local zone = GetRealZoneText and GetRealZoneText() or "Unknown waters"
@@ -153,8 +200,7 @@ local function Refresh()
     if not frame then return end
     local water = Water()
     timerText:SetText(SessionTime())
-    local showReminder = LH_FishingDB.autoLure and not LureInBags()
-    lureReminder:SetShown(showReminder)
+    local _, showReminder = UpdateLureStatus()
     local key = currentLocation
     local historyItems, historyTotal, historySeconds = {}, water.total or 0, 0
     local overallSeconds = LH_FishingDB.fishingSeconds or 0
@@ -203,7 +249,7 @@ local function Refresh()
     table.sort(entries, function(a, b) return a.count == b.count and a.id < b.id or a.count > b.count end)
     local auctionTotal, vendorTotal, auctionUnitTotal, vendorUnitTotal = 0, 0, 0, 0
     local auctionKnown, vendorKnown, quantityTotal = false, false, 0
-    local widths = {190, 30, 40, 62, 62, 78, 78}
+    local widths = {190, 30, 70, 62, 62, 78, 78}
     for column, label in ipairs(headerLabels) do
         widths[column] = math.max(widths[column], MeasuredWidth(label:GetText()))
     end
@@ -395,6 +441,7 @@ local function UpdateActive()
     active = wanted
     if active then
         bagCounts = CountBags()
+        pendingLureID = nil
         pendingFishLootUntil, pendingDirect = 0, {}
         castAt, channelStoppedAt = 0, 0
         StartSession()
@@ -403,6 +450,7 @@ local function UpdateActive()
         currentSession = nil
         pendingFishLootUntil, pendingDirect = 0, {}
         castAt, channelStoppedAt = 0, 0
+        pendingLureID = nil
     end
     if frame then frame:SetShown(active) end
     if not active then channeling, retryCast = false, false end
@@ -480,6 +528,7 @@ local function CreateUI()
         {"Vendor Each", 435, 78}, {"Vendor Sum", 519, 78},
     }) do
         local label = Text(headings, 10, "LEFT", column[2], 0, column[3])
+        label:SetWordWrap(false)
         label:SetText(column[1])
         headerLabels[#headerLabels + 1] = label
     end
@@ -639,6 +688,15 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
     elseif event == "BAG_UPDATE_DELAYED" then
         local current = CountBags()
         local found = false
+        if active then
+            for _, entry in ipairs(LURES) do
+                local id = entry[1]
+                if (current[id] or 0) < (bagCounts[id] or 0) then
+                    pendingLureID, pendingLureAt = id, GetTime()
+                    break
+                end
+            end
+        end
         if active and GetTime() <= pendingFishLootUntil then
             for id, count in pairs(current) do
                 local gained = count - (bagCounts[id] or 0)
@@ -653,7 +711,8 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
         bagCounts = current
         if active then
             ApplyBinding()
-            if found then Refresh() end
+            local lureChanged = UpdateLureStatus()
+            if found or lureChanged then Refresh() end
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
         ApplyBinding()
@@ -687,7 +746,8 @@ events:SetScript("OnUpdate", function(_, dt)
     if active then
         timerText:SetText(SessionTime())
         local key = Place()
-        if key ~= currentLocation or refreshElapsed >= 10 then
+        local lureChanged = UpdateLureStatus()
+        if key ~= currentLocation or refreshElapsed >= 10 or lureChanged then
             refreshElapsed = 0
             Refresh()
         end
