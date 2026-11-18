@@ -22,11 +22,11 @@ local rows, active, cast, bindingOwner = {}, false
 local tabs, activeTab, currentSession = {}, "session"
 local channeling, lastLoot = false, 0
 local channelStoppedAt = 0
-local bagCounts, pendingFishLootUntil, pendingDirect = {}, 0, {}
+local bagCounts, pendingFishLootUntil, pendingDirect, pendingBag = {}, 0, {}, {}
 local castAt, retryCast = 0, false
 local EARLY_RECAST_SECONDS = 2
 local elapsed, currentLocation, pendingBindings = 0
-local refreshElapsed, lureCheckElapsed = 0, 0
+local refreshElapsed, lureCheckElapsed, bagScanElapsed = 0, 0, 0
 local knownLureID, knownEnchantID, knownPoleID, pendingLureID, pendingLureAt, lureStatusKey
 
 local function SessionPlace(session, key)
@@ -54,6 +54,7 @@ local function CountBags()
     local itemID = C_Container and C_Container.GetContainerItemID or GetContainerItemID
     local itemInfo = C_Container and C_Container.GetContainerItemInfo or GetContainerItemInfo
     local counts = {}
+    local missingInfo = {}
     if not slots or not itemInfo then return counts end
     for bag = 0, 4 do
         for slot = 1, slots(bag) or 0 do
@@ -65,9 +66,12 @@ local function CountBags()
             end
             if id and type(count) == "number" then
                 counts[id] = (counts[id] or 0) + count
+            elseif id then
+                missingInfo[id] = true
             end
         end
     end
+    for id in pairs(missingInfo) do counts[id] = ItemCount(id) end
     return counts
 end
 local function FishingSkill()
@@ -455,13 +459,13 @@ local function UpdateActive()
     if active then
         bagCounts = CountBags()
         pendingLureID = nil
-        pendingFishLootUntil, pendingDirect = 0, {}
+        pendingFishLootUntil, pendingDirect, pendingBag = 0, {}, {}
         castAt, channelStoppedAt = 0, 0
         StartSession()
     elseif currentSession then
         currentSession.endedAt = time()
         currentSession = nil
-        pendingFishLootUntil, pendingDirect = 0, {}
+        pendingFishLootUntil, pendingDirect, pendingBag = 0, {}, {}
         castAt, channelStoppedAt = 0, 0
         pendingLureID = nil
     end
@@ -605,7 +609,7 @@ function Fishing:ResetHistory()
     currentSession = nil
     lastLoot = 0
     bagCounts = CountBags()
-    pendingFishLootUntil, pendingDirect = 0, {}
+    pendingFishLootUntil, pendingDirect, pendingBag = 0, {}, {}
     if not channeling then castAt = 0 end
     channelStoppedAt = 0
     if active then
@@ -635,6 +639,37 @@ local function RecordCatch(id, count)
         place.total = place.total + count
     end
 end
+local function ScanBagChanges()
+    local current = CountBags()
+    local found = false
+    if active then
+        for _, entry in ipairs(LURES) do
+            local id = entry[1]
+            if (current[id] or 0) < (bagCounts[id] or 0) then
+                pendingLureID, pendingLureAt = id, GetTime()
+                break
+            end
+        end
+        local recentCast = castAt > 0 and GetTime() - castAt <= 45
+        if recentCast or GetTime() <= pendingFishLootUntil then
+            for id, count in pairs(current) do
+                local gained = count - (bagCounts[id] or 0)
+                if gained > 0 then
+                    local alreadyCounted = math.min(gained, pendingDirect[id] or 0)
+                    pendingDirect[id] = (pendingDirect[id] or 0) - alreadyCounted
+                    gained = gained - alreadyCounted
+                    if gained > 0 then
+                        RecordCatch(id, gained)
+                        pendingBag[id] = (pendingBag[id] or 0) + gained
+                        found = true
+                    end
+                end
+            end
+        end
+    end
+    bagCounts = current
+    return found
+end
 
 local events = CreateFrame("Frame")
 for _, event in ipairs({"ADDON_LOADED", "PLAYER_ENTERING_WORLD", "PLAYER_EQUIPMENT_CHANGED", "UNIT_INVENTORY_CHANGED",
@@ -650,7 +685,7 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
         local name = FishingName()
         if c == 7620 or c == 131474 or (type(c) == "number" and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(c) == name) then
             channeling, castAt, retryCast = true, GetTime(), false
-            pendingFishLootUntil, pendingDirect = 0, {}
+            pendingFishLootUntil, pendingDirect, pendingBag = 0, {}, {}
             ApplyBinding()
             local water = Water()
             water.last = time()
@@ -666,12 +701,14 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
     elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" and a == "player" and channeling then
         channeling = false
         channelStoppedAt = GetTime()
-        pendingFishLootUntil = channelStoppedAt + 3
+        pendingFishLootUntil = channelStoppedAt + 10
         ApplyBinding()
     elseif (event == "UI_INFO_MESSAGE" or event == "UI_ERROR_MESSAGE") and active then
         local message = type(b) == "string" and b or a
         if type(message) == "string" and message == ERR_FISH_NOT_HOOKED then
             retryCast = true
+            castAt = 0
+            pendingFishLootUntil = 0
             ApplyBinding()
         end
     elseif (event == "LOOT_READY" or event == "LOOT_OPENED") and active then
@@ -680,52 +717,35 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
         if (ok and isFishing) or recentCast then
             if GetTime() > pendingFishLootUntil then pendingDirect = {} end
             pendingFishLootUntil = GetTime() + 3
-            if GetTime() - lastLoot > 0.5 then
-                local found = false
+            if GetTime() - lastLoot > 2 then
+                local found, sawLoot = false, false
                 for slot = 1, (GetNumLootItems and GetNumLootItems() or 0) do
                     local linked, link = pcall(GetLootSlotLink, slot)
                     if not linked or (issecretvalue and issecretvalue(link)) then link = nil end
                     local id = type(link) == "string" and tonumber(link:match("item:(%d+)"))
                     if id then
+                        sawLoot = true
                         local _, _, count = GetLootSlotInfo(slot)
                         count = math.max(1, tonumber(count) or 1)
-                        RecordCatch(id, count)
-                        pendingDirect[id] = (pendingDirect[id] or 0) + count
-                        found = true
+                        local alreadyCounted = math.min(count, pendingBag[id] or 0)
+                        pendingBag[id] = (pendingBag[id] or 0) - alreadyCounted
+                        count = count - alreadyCounted
+                        if count > 0 then
+                            RecordCatch(id, count)
+                            pendingDirect[id] = (pendingDirect[id] or 0) + count
+                            found = true
+                        end
                     end
                 end
-                if found then lastLoot = GetTime(); Refresh() end
+                if sawLoot then lastLoot = GetTime() end
+                if found then Refresh() end
             end
             if LootSlot and GetNumLootItems then
                 for slot = 1, GetNumLootItems() do LootSlot(slot) end
             end
         end
     elseif event == "BAG_UPDATE_DELAYED" then
-        local current = CountBags()
-        local found = false
-        if active then
-            for _, entry in ipairs(LURES) do
-                local id = entry[1]
-                if (current[id] or 0) < (bagCounts[id] or 0) then
-                    pendingLureID, pendingLureAt = id, GetTime()
-                    break
-                end
-            end
-        end
-        local recentCast = castAt > 0 and (channeling
-            or (channelStoppedAt > 0 and GetTime() - channelStoppedAt <= 3))
-        if active and (GetTime() <= pendingFishLootUntil or recentCast) then
-            for id, count in pairs(current) do
-                local gained = count - (bagCounts[id] or 0)
-                if gained > 0 then
-                    local alreadyCounted = math.min(gained, pendingDirect[id] or 0)
-                    pendingDirect[id] = (pendingDirect[id] or 0) - alreadyCounted
-                    gained = gained - alreadyCounted
-                    if gained > 0 then RecordCatch(id, gained); found = true end
-                end
-            end
-        end
-        bagCounts = current
+        local found = ScanBagChanges()
         if active then
             ApplyBinding()
             local lureChanged = UpdateLureStatus()
@@ -754,6 +774,7 @@ events:SetScript("OnUpdate", function(_, dt)
     elapsed = elapsed + dt
     refreshElapsed = refreshElapsed + dt
     lureCheckElapsed = lureCheckElapsed + dt
+    bagScanElapsed = bagScanElapsed + dt
     if elapsed < 0.2 then return end
     elapsed = 0
     if pendingBindings or (active and channeling) or (active and lureCheckElapsed >= 0.5) then
@@ -761,6 +782,10 @@ events:SetScript("OnUpdate", function(_, dt)
         ApplyBinding()
     end
     if active then
+        if bagScanElapsed >= 0.5 and castAt > 0 and GetTime() - castAt <= 45 then
+            bagScanElapsed = 0
+            if ScanBagChanges() then Refresh() end
+        end
         timerText:SetText(SessionTime())
         local key = Place()
         local lureChanged = UpdateLureStatus()
