@@ -9,6 +9,7 @@
 ## Author: LH_Fishing
 ## Version: 1.0.0
 ## SavedVariablesPerCharacter: LH_FishingDB
+## SavedVariables: LH_FishingHistory
 
 LH_Fishing.lua
 Settings.lua

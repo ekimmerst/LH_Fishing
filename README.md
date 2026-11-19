@@ -11,7 +11,7 @@
   <li>Automatically loots fishing catches and lists every item caught. Hover over a row for the normal item tooltip.</li>
   <li>Flashes the updated quantity and its background once over one second when you catch an item.</li>
   <li>Starts a new session when you equip a fishing pole. The large gold timer starts with that session's first cast and stops when you unequip the pole.</li>
-  <li>Shows <strong>Session</strong> catches, <strong>History here</strong> from earlier sessions in the current area, and <strong>History overall</strong> across all recorded areas.</li>
+  <li>Shows <strong>Session</strong> catches for the current character, <strong>History here</strong> across all characters in the current area, and <strong>History overall</strong> across all characters and areas. Both history views include the current session.</li>
   <li>Shows item counts and catch percentages for the selected tab. The current session's percentages use only that session's catches.</li>
   <li>Shows each item's most common fishing area across the saved history in all three tabs, including its subzone when available.</li>
   <li>Rows start sorted by quantity, highest first. Click a column heading to sort its rows; click it again to reverse the order. Switching tabs restores the default sort.</li>
@@ -27,7 +27,7 @@
 
 <h2 style="color: #c78be6;">Window and history</h2>
 
-<p>Drag the unlocked window to move it; <strong>Lock fishing window</strong> prevents dragging. <strong>Reset position</strong> returns it to the screen center. The current area and its last fishing time appear below the title. A session ends when you unequip the pole; equipping it again starts an empty new session. Earlier catches remain under <strong>History here</strong> and <strong>History overall</strong>. Fishing history, session records and settings are saved per character.</p>
+<p>Drag the unlocked window to move it; <strong>Lock fishing window</strong> prevents dragging. <strong>Reset position</strong> returns it to the screen center. The current area and its last fishing time appear below the title. A session ends when you unequip the pole; equipping it again starts an empty new session. Session records and settings stay per character. Both history views share catches across characters. Existing fishing records from before the shared-history reset are cleared when each character first logs in with this version.</p>
 
 <p>Click the left arrow beside the timer to switch to Compact Mode. It keeps the timer and lure status visible while the window shrinks from its right edge; the upper-left corner stays fixed. Click the right arrow to restore the full window. The mode is saved per character.</p>
 
@@ -37,7 +37,7 @@
 
 <p>Compact Mode shows the goal bar at the bottom with a percentage; hover over it for details. Completing a goal plays an achievement-style animated alert. The goal is saved per character; use <strong>Clear goal</strong> to remove it.</p>
 
-<p><strong>Reset history</strong> in the LH Fishing settings asks for confirmation before deleting this character's saved catches, sessions and area history. It keeps the window position and fishing settings.</p>
+<p><strong>Reset history</strong> in the LH Fishing settings asks for confirmation before deleting this character's saved catches, sessions and contribution to the shared history. Other characters' catches remain. It keeps the window position and fishing settings.</p>
 
 <h2 style="color: #c78be6;">Settings profiles</h2>
 

@@ -31,9 +31,12 @@ local channelStoppedAt = 0
 local bagCounts, pendingFishLootUntil, catchSources = {}, 0, {}
 local castAt, retryCast = 0, false
 local EARLY_RECAST_SECONDS = 2
+local HISTORY_RESET_EPOCH = 1
 local elapsed, currentLocation, pendingBindings = 0
+local bindingMode, bindingMacro, jumpBound
 local refreshElapsed, lureCheckElapsed, bagScanElapsed = 0, 0, 0
 local knownLureID, knownEnchantID, knownPoleID, pendingLureID, pendingLureAt, lureStatusKey
+local characterHistory
 
 local function SessionPlace(session, key)
     local place = session.places[key]
@@ -192,6 +195,132 @@ local function Water()
     water.zone = zone
     water.subzone = subzone
     return water
+end
+local function CopyCounts(source)
+    local counts = {}
+    if type(source) == "table" then
+        for id, count in pairs(source) do
+            if type(id) == "number" and type(count) == "number" and count > 0 then
+                counts[id] = count
+            end
+        end
+    end
+    return counts
+end
+local function ResetOldHistory()
+    if (tonumber(LH_FishingHistory.resetEpoch) or 0) < HISTORY_RESET_EPOCH then
+        LH_FishingHistory.characters = {}
+        LH_FishingHistory.itemNames = {}
+        LH_FishingHistory.resetEpoch = HISTORY_RESET_EPOCH
+        characterHistory = nil
+    end
+    -- Per-character saved variables load only for the character logging in.
+    -- Clear each old copy before PrepareHistory can import it again.
+    if (tonumber(LH_FishingDB.historyResetEpoch) or 0) < HISTORY_RESET_EPOCH then
+        LH_FishingDB.items = {}
+        LH_FishingDB.itemNames = {}
+        LH_FishingDB.waters = {}
+        LH_FishingDB.sessions = {}
+        LH_FishingDB.fishingSeconds = nil
+        LH_FishingDB.historyResetEpoch = HISTORY_RESET_EPOCH
+    end
+end
+local function PrepareHistory()
+    if characterHistory then return characterHistory end
+    local name, realm
+    if UnitFullName then name, realm = UnitFullName("player") end
+    if not name and UnitName then name = UnitName("player") end
+    if (not realm or realm == "") and GetRealmName then realm = GetRealmName() end
+    if not name or not realm or realm == "" then return nil end
+    LH_FishingHistory = type(LH_FishingHistory) == "table" and LH_FishingHistory or {}
+    LH_FishingHistory.characters = type(LH_FishingHistory.characters) == "table" and LH_FishingHistory.characters or {}
+    local key = realm .. ":" .. name
+    characterHistory = LH_FishingHistory.characters[key]
+    if characterHistory then return characterHistory end
+    characterHistory = {items = {}, waters = {}, seconds = 0}
+    LH_FishingHistory.characters[key] = characterHistory
+    for id, itemName in pairs(LH_FishingDB.itemNames) do
+        if type(id) == "number" and type(itemName) == "string" then
+            LH_FishingHistory.itemNames[id] = itemName
+        end
+    end
+    characterHistory.items = CopyCounts(LH_FishingDB.items)
+    characterHistory.seconds = type(LH_FishingDB.fishingSeconds) == "number" and LH_FishingDB.fishingSeconds or 0
+    for placeKey, old in pairs(LH_FishingDB.waters) do
+        if type(old) == "table" then
+            local items = CopyCounts(old.items)
+            local total = 0
+            for _, count in pairs(items) do total = total + count end
+            characterHistory.waters[placeKey] = {
+                name = old.name, zone = old.zone, subzone = old.subzone, last = old.last,
+                items = items, total = total, seconds = 0,
+            }
+        end
+    end
+    for _, session in ipairs(LH_FishingDB.sessions) do
+        characterHistory.seconds = characterHistory.seconds + (tonumber(session.seconds) or 0)
+        if type(session.places) == "table" then
+            for placeKey, place in pairs(session.places) do
+                local water = characterHistory.waters[placeKey]
+                if not water then
+                    water = {items = {}, total = 0, seconds = 0}
+                    characterHistory.waters[placeKey] = water
+                end
+                water.seconds = water.seconds + (tonumber(place.seconds) or 0)
+            end
+        end
+    end
+    return characterHistory
+end
+local function SharedWater(key, localWater)
+    local history = PrepareHistory()
+    if not history then return nil end
+    local water = history.waters[key]
+    if not water then
+        water = {items = {}, total = 0, seconds = 0}
+        history.waters[key] = water
+    end
+    if localWater then
+        water.name, water.zone, water.subzone = localWater.name, localWater.zone, localWater.subzone
+    end
+    return water
+end
+local function HistoryTotals(key)
+    PrepareHistory()
+    local hereItems, overallItems, areaCounts = {}, {}, {}
+    local hereTotal, hereSeconds, overallSeconds, last = 0, 0, 0, nil
+    for _, history in pairs(LH_FishingHistory.characters) do
+        overallSeconds = overallSeconds + (history.seconds or 0)
+        for id, count in pairs(history.items) do
+            overallItems[id] = (overallItems[id] or 0) + count
+        end
+        for placeKey, water in pairs(history.waters) do
+            if placeKey == key then
+                hereSeconds = hereSeconds + (water.seconds or 0)
+                if water.last and (not last or water.last > last) then last = water.last end
+                for id, count in pairs(water.items) do
+                    hereItems[id] = (hereItems[id] or 0) + count
+                    hereTotal = hereTotal + count
+                end
+            end
+            local zone, subzone = water.zone, water.subzone
+            if type(water.name) == "string" then
+                local nameZone, nameSubzone = water.name:match("^(.-) %- (.+)$")
+                zone = zone or nameZone or water.name
+                if nameZone == zone then subzone = subzone or nameSubzone end
+            end
+            local area = type(zone) == "string" and zone ~= "" and
+                (type(subzone) == "string" and subzone ~= "" and (zone .. " (" .. subzone .. ")") or zone)
+            if area then
+                for id, count in pairs(water.items) do
+                    local counts = areaCounts[id]
+                    if not counts then counts = {}; areaCounts[id] = counts end
+                    counts[area] = (counts[area] or 0) + count
+                end
+            end
+        end
+    end
+    return hereItems, hereTotal, hereSeconds, overallItems, overallSeconds, areaCounts, last
 end
 local function Money(copper)
     if type(copper) ~= "number" then return "-" end
@@ -439,16 +568,17 @@ local function ResolveGoalItem(value)
     end
     local wanted = value:match("^%s*(.-)%s*$"):lower()
     if wanted == "" then return nil end
-    for caughtID, count in pairs(LH_FishingDB.items) do
+    local _, _, _, allItems = HistoryTotals(currentLocation)
+    for caughtID, count in pairs(allItems) do
         if type(count) == "number" and count > 0 then
-            local caughtName = LH_FishingDB.itemNames[caughtID]
+            local caughtName = LH_FishingHistory.itemNames[caughtID] or LH_FishingDB.itemNames[caughtID]
             if not caughtName and itemInfo then
                 local ok, caughtName = pcall(itemInfo, caughtID)
                 if ok and type(caughtName) == "string" and not (issecretvalue and issecretvalue(caughtName)) then
-                    LH_FishingDB.itemNames[caughtID] = caughtName
+                    LH_FishingHistory.itemNames[caughtID] = caughtName
                 end
             end
-            caughtName = LH_FishingDB.itemNames[caughtID]
+            caughtName = LH_FishingHistory.itemNames[caughtID] or LH_FishingDB.itemNames[caughtID]
             if type(caughtName) == "string" and caughtName:lower() == wanted then return caughtID, caughtName end
         end
     end
@@ -502,21 +632,8 @@ local function Refresh()
     end
     local showReminder = lureReminder:IsShown()
     local key = currentLocation
-    local historyItems, historyTotal, historySeconds = {}, water.total or 0, 0
-    local overallSeconds = LH_FishingDB.fishingSeconds or 0
-    local currentPlace = currentSession and currentSession.places[key]
-    for id, count in pairs(water.items) do
-        local previous = count - (currentPlace and (currentPlace.items[id] or 0) or 0)
-        if previous > 0 then historyItems[id] = previous end
-    end
-    historyTotal = math.max(0, historyTotal - (currentPlace and currentPlace.total or 0))
-    for _, session in ipairs(LH_FishingDB.sessions) do
-        overallSeconds = overallSeconds + (session.seconds or 0)
-        local place = session.places and session.places[key]
-        if session ~= currentSession and place then
-            historySeconds = historySeconds + (place.seconds or 0)
-        end
-    end
+    local historyItems, historyTotal, historySeconds, overallItems, overallSeconds,
+        areaCounts, lastFished = HistoryTotals(key)
     tabs.session.text:SetText("Session")
     tabs.history.text:SetText("History here")
     tabs.overall.text:SetText("History overall")
@@ -525,7 +642,7 @@ local function Refresh()
         tab.text:SetTextColor(selected and 1 or 0.7, selected and 0.82 or 0.7, selected and 0.38 or 0.7)
         tab.underline:SetShown(selected)
     end
-    local visited = water.last and date("%Y-%m-%d %H:%M", water.last) or "Never"
+    local visited = lastFished and date("%Y-%m-%d %H:%M", lastFished) or "Never"
     locationText:SetText(water.name .. "  |  Last fished: " .. visited)
     local visibleItems
     if activeTab == "session" then
@@ -533,7 +650,7 @@ local function Refresh()
     elseif activeTab == "history" then
         visibleItems = historyItems
     else
-        visibleItems = LH_FishingDB.items
+        visibleItems = overallItems
     end
     local chanceItems = visibleItems
     local chanceTotal = activeTab == "history" and historyTotal or 0
@@ -555,26 +672,7 @@ local function Refresh()
             if activeTab ~= "history" then chanceTotal = chanceTotal + count end
         end
     end
-    local areaCounts, commonAreas = {}, {}
-    for _, recordedWater in pairs(LH_FishingDB.waters) do
-        local zone, subzone = recordedWater.zone, recordedWater.subzone
-        if type(recordedWater.name) == "string" then
-            local nameZone, nameSubzone = recordedWater.name:match("^(.-) %- (.+)$")
-            zone = zone or nameZone or recordedWater.name
-            if nameZone == zone then subzone = subzone or nameSubzone end
-        end
-        local area = type(zone) == "string" and zone ~= "" and
-            (type(subzone) == "string" and subzone ~= "" and (zone .. " (" .. subzone .. ")") or zone)
-        if area and type(recordedWater.items) == "table" then
-            for id, count in pairs(recordedWater.items) do
-                if type(count) == "number" and count > 0 then
-                    local counts = areaCounts[id]
-                    if not counts then counts = {}; areaCounts[id] = counts end
-                    counts[area] = (counts[area] or 0) + count
-                end
-            end
-        end
-    end
+    local commonAreas = {}
     for id, counts in pairs(areaCounts) do
         local bestArea, bestCount
         for area, count in pairs(counts) do
@@ -593,8 +691,9 @@ local function Refresh()
         end
         if type(name) ~= "string" or (issecretvalue and issecretvalue(name)) then name = nil end
         if issecretvalue and issecretvalue(icon) then icon = nil end
-        if name then LH_FishingDB.itemNames[entry.id] = name end
-        entry.name = name or LH_FishingDB.itemNames[entry.id] or ("Item %d"):format(entry.id)
+        if name then LH_FishingDB.itemNames[entry.id] = name; LH_FishingHistory.itemNames[entry.id] = name end
+        entry.name = name or LH_FishingHistory.itemNames[entry.id] or LH_FishingDB.itemNames[entry.id]
+            or ("Item %d"):format(entry.id)
         entry.icon = icon
         entry.auctionPrice = Price(entry.id)
         entry.area = commonAreas[entry.id]
@@ -862,26 +961,49 @@ local function KeyHeld()
     local ok, held = pcall(IsKeyDown, "SPACE")
     return ok and held
 end
+local function BindingIs(key, action)
+    if not GetBindingAction then return true end
+    local ok, current = pcall(GetBindingAction, key, true)
+    return not ok or current == action
+end
 local function ApplyBinding()
     if Combat() or not frame then pendingBindings = true; return end
     if KeyHeld() then pendingBindings = true; return end
     pendingBindings = false
-    ClearOverrideBindings(bindingOwner)
-    if not active then return end
+    if not active then
+        if bindingMode then
+            ClearOverrideBindings(bindingOwner)
+            bindingMode, bindingMacro, jumpBound = nil, nil, nil
+        end
+        return
+    end
+    -- Replace the active action in place; clearing it on every update can let Space fall back to Jump.
     -- The bobber can be interacted with only when it is the player's soft target.
     -- A misplaced bobber uses the retry macro on the same Space press.
     if channeling and not retryCast and GetTime() - castAt >= EARLY_RECAST_SECONDS and BobberReady() then
-        SetOverrideBinding(bindingOwner, true, "SPACE", "INTERACTTARGET")
+        if bindingMode ~= "interact" or not BindingIs("SPACE", "INTERACTTARGET") then
+            SetOverrideBinding(bindingOwner, true, "SPACE", "INTERACTTARGET")
+            bindingMode = "interact"
+        end
     else
         local macro = (channeling and "/stopcasting\n/cast " or "/cast ") .. FishingName()
         if not channeling and LH_FishingDB.autoLure and not HasLure() then
             local lureInfo = BestLure()
             if lureInfo then macro = ("/use item:%d\n/use 16"):format(lureInfo[1]) end
         end
-        cast:SetAttribute("macrotext", macro)
-        SetOverrideBindingClick(bindingOwner, true, "SPACE", "LH_FishingCastButton", "LeftButton")
+        if bindingMacro ~= macro then
+            cast:SetAttribute("macrotext", macro)
+            bindingMacro = macro
+        end
+        if bindingMode ~= "cast" or not BindingIs("SPACE", "CLICK LH_FishingCastButton:LeftButton") then
+            SetOverrideBindingClick(bindingOwner, true, "SPACE", "LH_FishingCastButton", "LeftButton")
+            bindingMode = "cast"
+        end
     end
-    SetOverrideBinding(bindingOwner, true, "SHIFT-SPACE", "JUMP")
+    if not jumpBound or not BindingIs("SHIFT-SPACE", "JUMP") then
+        SetOverrideBinding(bindingOwner, true, "SHIFT-SPACE", "JUMP")
+        jumpBound = true
+    end
 end
 local function StartSession()
     local previous = LH_FishingDB.sessions[#LH_FishingDB.sessions]
@@ -929,10 +1051,14 @@ local function UpdateActive()
 end
 local function CreateUI()
     LH_FishingDB = type(LH_FishingDB) == "table" and LH_FishingDB or {}
+    LH_FishingHistory = type(LH_FishingHistory) == "table" and LH_FishingHistory or {}
+    LH_FishingHistory.characters = type(LH_FishingHistory.characters) == "table" and LH_FishingHistory.characters or {}
+    LH_FishingHistory.itemNames = type(LH_FishingHistory.itemNames) == "table" and LH_FishingHistory.itemNames or {}
     LH_FishingDB.items = type(LH_FishingDB.items) == "table" and LH_FishingDB.items or {}
     LH_FishingDB.itemNames = type(LH_FishingDB.itemNames) == "table" and LH_FishingDB.itemNames or {}
     LH_FishingDB.waters = type(LH_FishingDB.waters) == "table" and LH_FishingDB.waters or {}
     LH_FishingDB.sessions = type(LH_FishingDB.sessions) == "table" and LH_FishingDB.sessions or {}
+    ResetOldHistory()
     LH_FishingDB.locked = LH_FishingDB.locked == true
     LH_FishingDB.autoLure = LH_FishingDB.autoLure ~= false
     LH_FishingDB.compact = LH_FishingDB.compact == true
@@ -1258,6 +1384,10 @@ function Fishing:ResetPosition()
 end
 function Fishing:ResetHistory()
     if not LH_FishingDB then return end
+    local history = PrepareHistory()
+    if history then
+        history.items, history.waters, history.seconds = {}, {}, 0
+    end
     LH_FishingDB.items = {}
     LH_FishingDB.itemNames = {}
     LH_FishingDB.waters = {}
@@ -1291,6 +1421,14 @@ local function RecordCatch(id, count)
     LH_FishingDB.items[id] = (LH_FishingDB.items[id] or 0) + count
     water.items[id] = (water.items[id] or 0) + count
     water.total = water.total + count
+    local history = PrepareHistory()
+    local sharedWater = SharedWater(currentLocation, water)
+    if history and sharedWater then
+        history.items[id] = (history.items[id] or 0) + count
+        sharedWater.items[id] = (sharedWater.items[id] or 0) + count
+        sharedWater.total = sharedWater.total + count
+        sharedWater.last = water.last
+    end
     if currentSession then
         local place = SessionPlace(currentSession, currentLocation)
         currentSession.items[id] = (currentSession.items[id] or 0) + count
@@ -1347,6 +1485,7 @@ end
 events:SetScript("OnEvent", function(_, event, a, b, c)
     if event == "ADDON_LOADED" then if a == ADDON then CreateUI() end; return end
     if not frame then return end
+    if event == "PLAYER_ENTERING_WORLD" then PrepareHistory() end
     if event == "UNIT_SPELLCAST_CHANNEL_START" and a == "player" then
         local name = FishingName()
         if c == 7620 or c == 131474 or (type(c) == "number" and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(c) == name) then
@@ -1356,6 +1495,8 @@ events:SetScript("OnEvent", function(_, event, a, b, c)
             ApplyBinding()
             local water = Water()
             water.last = time()
+            local sharedWater = SharedWater(currentLocation, water)
+            if sharedWater then sharedWater.last = water.last end
             if currentSession then
                 currentSession.firstCastAt = currentSession.firstCastAt or time()
                 currentSession.casts = currentSession.casts + 1
@@ -1435,8 +1576,14 @@ events:SetScript("OnUpdate", function(_, dt)
     if active and currentSession and currentSession.firstCastAt then
         currentSession.seconds = (currentSession.seconds or 0) + dt
         local key = Place()
-        local place = currentSession.places[key]
-        if place then place.seconds = (place.seconds or 0) + dt end
+        local place = SessionPlace(currentSession, key)
+        place.seconds = (place.seconds or 0) + dt
+        local history = PrepareHistory()
+        local sharedWater = SharedWater(key)
+        if history and sharedWater then
+            history.seconds = history.seconds + dt
+            sharedWater.seconds = sharedWater.seconds + dt
+        end
     end
     elapsed = elapsed + dt
     refreshElapsed = refreshElapsed + dt
